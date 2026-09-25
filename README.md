@@ -22,7 +22,7 @@
 |---|---|
 | 版本 | 0.0.0(架构设计阶段) |
 | 代码 | 尚未生成 |
-| 文档 | `docs/arch.md` v0.9（评审稿） |
+| 文档 | `docs/arch.md` v0.10（评审稿） |
 | 当前阶段 | 待进入 **Phase 1** —— 最小可恢复闭环(MVP) |
 
 ## 架构核心
@@ -64,6 +64,8 @@ Command Service ─→ KV (权威状态) ─→ StateEventQueue (唤醒) ─→ 
 | 工具模型 | 统一异步 Invocation(MCP/A2A/RAG/人工审批) |
 | 插件分层 | Handler Plugin + Provider Adapter |
 | 组件编排 | 单一组件模型 + Assembly Binding;单机/分布式同构 |
+| Registry 可用性 | 无状态多副本 + 共享 KV + JWKS 离线验签(故障不阻断在途 Run) |
+| 流推送 | 无状态 Stream Gateway + EventIndex 断线补齐(任意水平扩展) |
 | 部署 | 所有计算服务无状态;Serverless Function / Container / K8s 任选 |
 
 完整 ADR 见 `docs/arch.md` §18。
