@@ -1,6 +1,6 @@
 # ElasticHarness 平台总体架构
 
-> 状态：v0.10（评审稿）  
+> 状态：v0.11（评审稿）  
 > 目标：定义一个以状态机为核心、计算无状态、状态外置、基础设施可插拔的 Harness 平台。  
 > 修订：  
 > - v0.2 补充 Signal Inbox 与合并语义、Effect Ledger / Step / Timer 数据模型、系统不变量清单、错误分类、API 补全与术语表。  
@@ -14,6 +14,8 @@
 > - v0.9 二轮回读修正：**§5.3.2 成本闸行为纠正**——预算不足时不再"降级为两相派发"，而是**不创建该 Effect** 并走预算分支迁移（§11.3）；原写法把"两相"当成一种降级档位，混淆了安全与成本两闸。**§10.1 时序图重画**——原图让 Worker 在一次提交里同时写 `PENDING` 与 `WAITING`，与"工具调用是两相"矛盾；现拆为 `call-model` 内联一次提交 → `entered` 自续跑 → `call-tools` 一次原子提交（`WAITING` + `PENDING` 同事务），派发者改为独立的 `D`（Effect Dispatcher），并补出"未抢到令牌静默退出"分支。**§5.4 分类枚举方向修正**——原写"只有第一类才是 Effect"却把 `pure` 直调列为第一类，自相矛盾；改为"只有第二类（改变世界）才是 Effect"。**§8.7 `stateEnterCounter` 定义收紧**——原表述"进入当前状态时递增"会与"同状态内重复迁移"歧义，明确为"仅当 `currentState` 变化才 +1"。**§11.2 不变量 #6 澄清**——"不再创建"而非"已经发生的不算"，补明在途调用不回溯。**§8.4 计费口径补全**——`usage` 与 `invocations` 定为汇总/明细关系（`usage.costMicros` = 明细成本之和），杜绝重复计费歧义。其余：§10.2 图 `EffectLedger(DISPATCHED)`→`PENDING`（意图先落账）、§8.2 `producer` 统一为 `harness/tool-executor`、§14.1 补 `resiliency.idempotent` 与 `sideEffect` 的区分说明（同名不同义的陷阱）+ 装配校验规则 2 指明取值来源、§5.2 补 `waiting` 是不迁移的 Outcome（无需 transitions 规则）、§12/§7.2 补 JWT `kind` claim、§14.3/§15 补 `api`/`execution-profile` 组件、§16 修正 `Invocation Ledger` 笔误为 `Effect Ledger`、§10.2 明确审批复用 Invocation 键空间、§19 术语表补 Effect 与 `pure` 直调的区别、§18 决策表补 Timer 判据一行。
 
 > - v0.10 五维度评审修复（功能/性能/可用/安全/扩展）：**§7.2 补 Registry 高可用模型**——无状态多副本 + 共享 KV；JWT 非对称签名 + JWKS 离线验签，Registry 故障只暂停新注册与新 Run 创建，不阻塞在途 Run 与 MQ 写入。**§9 API 加固**——`Idempotency-Key` 作用域 `(tenant, principal)`、列表查询统一 cursor 分页、端点限流、SSE/WebSocket 订阅鉴权与服务端签发的不透明 cursor。**§12 补 JWT 算法白名单（拒 `none` 与对称密钥）、审计哈希链/WORM、流端点短期令牌**。**§9.2 补 Event Stream Gateway 水平扩展模型**（无状态 consumer group，无粘性会话，断线按 cursor 从 EventIndex 补齐）。**§5.3 补 Harness Definition 进程内缓存**（定义不可变，缓存天然安全）。**§13.1 补 SSE 推送延迟水位**。修正 §5.1 示例 `timeout`/`timeouts` 命名不一致、为 `wait-approval` 补超时与 `timedOut` 迁移（对齐自身"超时覆盖"发布校验）、为 `call-model`/`call-tools` 补 `failed` 迁移；删除 §10.1 时序图重复 Note；§18 决策表与 §19 术语表同步。
+
+> - v0.11 二轮五维度评审修复：**§12/§7.4 补 Device 主体身份**——enrollment 核验（预置 token 或 mTLS）、`kind: device` 短期凭证、`deviceId + sessionEpoch` 绑定校验；Device 端点此前无鉴权规范，离线 Agent 可伪造回传。**§7 端口表补 `AuthnAuthz` 端口**（授权"双重检查"此前无端口承载，框架不内置身份源但默认拒绝匿名）。**§6.2 队列分区模型澄清**——分区数为按吞吐规划的有限常量，分区键哈希分配，不随 Run 数增长；权威有序性由 EventIndex sequence 保证。**§6.1 `TimerIndex` 补 dueAt 分桶 + shard 分片**（消除全量到期扫描热点），并把 `HandlerRegistry/` 纳入租户前缀例外清单（修正 v0.10 自引入的不一致）。**§4.1.1 补在途 Run 与分支切换的并发语义**（checkout 不中止在途 Run，tip 推进以节点 `parentId` CAS 收敛）。**§11.1 补 Worker 滚动部署行为**。**§13 补遥测 PII 脱敏**（载荷只存引用与摘要）。
 
 ## 1. 愿景与范围
 
@@ -137,6 +139,7 @@ Chat 的上下文不是一条只能追加的线性日志，而是一棵 **Git �
 - **编辑/重新生成 = 开新分支**：用户编辑历史消息或要求重新生成时，从该节点 fork 出新分支继续，历史分支原样保留、可回看、可切换。Run fork（§16 Phase 3）也以节点为分叉点。
 - **上下文组装**：为 Run 组装上下文时，从分支 tip 向根回溯，按预算（token/费用）进行选择、截断与摘要——这直接回应 §17 风险 4 的上下文膨胀问题。
 - **摘要节点**：长分支可沉淀摘要节点；摘要经用户确认后可晋升为 MemoryRecord，`provenance` 指向源节点（见 §4.7）。
+- **在途 Run 与分支切换**：`checkout` 只移动活跃分支指针，**不中止在途 Run**。Run 在其创建时绑定的分支上写入节点，分支 tip 的推进以节点 `parentId` 引用的 CAS 收敛——并发编辑产生的新分支不会抢占在途 Run 的写入目标；新 Run 总是从当前活跃分支的 tip 创建。
 
 ### 4.2 Harness Definition 上下文
 
@@ -487,11 +490,12 @@ KV 至少存储：
 - `EventIndex/{tenantId}/{streamId}/{sequence}`：事件元数据与小事件载荷。
 - `Idempotency/{tenantId}/{scope}/{key}`：命令和副作用去重结果。
 - `Outbox/{tenantId}/{partition}/{id}`：待发布事件。
-- `Timer/{tenantId}/{timerId}` 与 `TimerIndex/{dueAt}/{timerId}`：持久定时器意图与到期扫描索引（见 §8.7）。
+- `Timer/{tenantId}/{timerId}` 与 `TimerIndex/{dueBucket}/{shard}/{dueAt}/{timerId}`：持久定时器意图与到期扫描索引（见 §8.7）。`dueBucket` 按到期时间分桶（如 10s 桶），扫描器只扫当前桶；`shard` 为有限常量分片，把同一时刻到期的 Timer 打散到 N 个键区间,消除高并发下的单点扫描热点。桶宽与分片数是 Assembly 配置,不进入领域模型。
 - `ToolInvocation/{tenantId}/{invocationId}`：调用状态和回调关联。
 - `ToolRegistration/{tenantId}/{registrationId}/{revision}`：规范化工具定义、端点引用、能力和状态。
+- `HandlerRegistry/{handlerId}`：Handler 注册表、心跳与吊销名单（见 §7.2）。
 
-**租户前缀是强制的**（`TimerIndex` 例外：它是跨租户的到期扫描索引，其值携带 `tenantId`）。理由：只有统一前缀才能支持按租户枚举、导出与合规删除；缺失租户维度的键会让"删除某租户全部数据"退化为全库扫描。
+**租户前缀是强制的**（`TimerIndex`、`HandlerRegistry` 例外：前者是跨租户的到期扫描索引,其值携带 `tenantId`;后者是部署级控制面元数据,不属于任何租户——二者的值都必须携带 `tenantId` 或以部署级主体限定访问）。理由：只有统一前缀才能支持按租户枚举、导出与合规删除；缺失租户维度的键会让"删除某租户全部数据"退化为全库扫描。
 
 **Run 快照不内嵌待处理列表**。把待处理项（Invocation / Timer / Effect）编成数组内嵌 Snapshot，会在长 Run 上无界膨胀并把每次迁移的写放大推向 O(Run 全部历史)。改为：待处理项各自成键（`Timer`、`Invocation`、`EffectLedger`），Snapshot 只保存**计数与水位**（如 `pendingCount`、`oldestPendingAt`）；需要枚举时按 `runId` 前缀扫描。Reconciler 的扫描正是基于这些独立键，而非 Snapshot 内嵌数组。
 
@@ -533,7 +537,7 @@ flowchart LR
     SEQ --> Wk[Harness Workers]
 ```
 
-建议以 `tenantId + runId` 作为两条队列的分区键，保证单个 Run 的有序消费。系统不能假定队列永不重复或永久保留，因此消费方必须幂等，长期回放依赖 EventStore/KV 索引和对象存储归档。
+建议以 `tenantId + runId` 作为两条队列的**路由键**（保证同一 Run 的消息哈希到同一分区,单分区内 FIFO）。**分区数是按吞吐规划的有界常量**（如 64/256）,与 Run 数量无关——千万级 Run 落入有限分区复用;单个 Run 的权威有序性不依赖队列分区,而由 EventIndex 的 `sequence` 与 Inbox 的裁决保证,因此"多 Run 共享一个分区"只是吞吐权衡,不构成正确性风险。系统不能假定队列永不重复或永久保留，因此消费方必须幂等，长期回放依赖 EventStore/KV 索引和对象存储归档。
 
 ### 6.3 对象存储：不可变大对象
 
@@ -593,6 +597,7 @@ flowchart LR
 | `MemoryStore` | upsert、search、delete、scope filter | Vector DB、全文检索、关系数据库 |
 | `TimerService` | schedule、cancel、fire | 云调度器、延迟队列、时间轮 |
 | `SecretProvider` | resolve、rotate、audit | KMS/Vault/云密钥服务 |
+| `AuthnAuthz` | authenticate、authorize、audit-decision | 进程内策略引擎、OPA、云 IAM；**框架不内置身份源**,未绑定实现的 Assembly 必须显式声明"拒绝匿名" |
 | `Telemetry` | trace、metric、log、audit | OpenTelemetry 兼容后端 |
 
 插件以 manifest 注册，声明稳定 ID、语义版本、可消费的 capability、输入/输出 schema、配置 schema、所需系统 Capability、超时/取消/恢复能力、部署模式、健康检查和兼容范围。**两种 manifest 的关系**：§7 的 Handler manifest 是**运行时注册**（面向 Registry，声明能力与健康，决定能否被发现和绑定）；§14.1 的 `component.yaml` 是**构建期装配**（面向组合根与 Assembly 校验，声明 Port 依赖与 Binding 需求，决定能否被编译进同一进程）。二者由构建工具生成/校验，同一组件的两份声明必须一致——`component.yaml` 中 `provides` 的 Port 即 Registry 中可被解析的 capability。Harness Definition 不包含任何 Handler 引用；可用性在对话启动时 Validate，绑定在 Run 创建时由调度式解析生成 ResolvedBinding 并随 Snapshot 固定（见 §7.2）。
@@ -625,7 +630,7 @@ Handler 的信任与可用性模型与 Kubernetes 同构：**Handler Registry �
 
 **1. 注册（Register）。** Handler 启动时向中心 Registry 提交 manifest：稳定 ID、语义版本、可消费的 capability 列表（含 features）、输入/输出 schema、部署形态（in-process / remote）、健康端点。注册成功后 Registry 签发 Handler 身份与初始凭证，Handler 进入 `active` 候选集。未注册的 Handler 对控制面与 MQ 均不可见。
 
-**2. 心跳与短期凭证（Heartbeat + Token Refresh）。** Registry 签发的是 **JWT 短期凭证（TTL 1 小时）**，claims 包含 `kind`（`handler` 或 `platform`，见 §12）、`handlerId`、`handlerVersion`、capabilities、租户作用域与 `jti`。Handler 必须周期心跳（远小于 TTL，默认 **15 分钟**，即 TTL/4，并加抖动）：心跳同时完成"存活续租"与"凭证滚动刷新"。心跳停止后凭证自然过期，Registry 将 Handler 标记为 `stale` 并从候选集摘除——无需显式注销，未授权写入的爆炸半径被 TTL 封顶。
+**2. 心跳与短期凭证（Heartbeat + Token Refresh）。** Registry 签发的是 **JWT 短期凭证（TTL 1 小时）**，claims 包含 `kind`（`handler`、`platform` 或 `device`，见 §12/§7.4）、`handlerId`、`handlerVersion`、capabilities、租户作用域与 `jti`。Handler 必须周期心跳（远小于 TTL，默认 **15 分钟**，即 TTL/4，并加抖动）：心跳同时完成"存活续租"与"凭证滚动刷新"。心跳停止后凭证自然过期，Registry 将 Handler 标记为 `stale` 并从候选集摘除——无需显式注销，未授权写入的爆炸半径被 TTL 封顶。
 
 **3. MQ 写入鉴权。** Handler 向 MQ 写入任何消息（状态结果、Signal 回传、进度事件）时必须在消息元数据中携带有效 JWT；MQ Gateway/Bridge 校验签名、过期时间、audience 与 `handlerId` 归属后才接受投递。进程内 Handler 由运行时注入凭证，远程 Handler 自行持有并刷新。凭证过期或 Handler 已注销的写入一律拒绝并告警。
 
@@ -720,6 +725,12 @@ deliveryModes: [pull]
 ### 7.4 Device、Workspace 与能力注册
 
 Device 首次接入时注册稳定身份和设备元数据；每次连接生成新的 `DeviceSession + sessionEpoch`，防止旧连接或离线 Agent 提交过期结果。Device 周期性发布不可变版本的 `CapabilityAdvertisement`：
+
+**Device 身份与凭证。** Device 是不受控网络环境中的主体,必须有独立身份核验,与 Handler/平台主体并列(见 §12):
+
+- **Enrollment（首次注册）**：管理操作,须持有预置的 enrollment token 或 mTLS 客户端证书(租户管理员预先签发/登记),并校验设备指纹与域名/网络策略;开放注册等价于向任意主机发放执行能力,默认禁止。
+- **运行期凭证**：注册成功后走与 Handler 相同的短期 JWT 路径,claims 标注 `kind: device`、`deviceId`、`sessionEpoch` 与租户作用域,TTL 与刷新节奏同 §7.2(TTL 1h,心跳 TTL/4)。
+- **回传校验**：`invocations:report` 端点验签后还须校验 JWT 中 `deviceId + sessionEpoch` 与 Invocation 记录绑定的 Device 会话一致——旧 epoch 的连接即使凭证未过期,其回传也按 late event 处理;`sessionEpoch` 递增即宣告旧会话全部作废。
 
 ```yaml
 deviceId: dev_local_pc_01
@@ -1313,6 +1324,7 @@ Reconciler 只做"重新唤醒"与"状态标记"，从不直接修改 Run 的业
 | 回调丢失 | Run 保持 waiting | callback timer + recover + Reconciler |
 | Timer 消息丢失/重复 | 不依赖单条 Timer 消息决定真相 | KV deadline 扫描；CAS 去重裁决 |
 | Handler/Provider 故障 | 局部状态受影响，不阻塞其他 Handler 分区 | 隔离队列、熔断；按定义层 `onFailure` 策略重试/重绑/降级（见 §7.2） |
+| Worker 滚动部署/缩容到零 | 已提交迁移不丢失;未领取的唤醒提示短暂滞留 | 部署前置条件:停止领取新唤醒(排空租约),在途租约自然到期后下线;StateEventQueue 的提示是可丢弃的,漏发的由 Reconciler 按 Inbox 兜底;缩容到零后由队列触发器重新拉起 |
 
 命令 API 只有在“业务状态 + Inbox/Outbox”写入 KV 成功后才返回 accepted；Worker 只有在迁移事务提交成功后才确认队列消息。由此队列故障主要影响推进延迟，不应导致已提交状态丢失。KV 是控制面的正确性核心，应优先选择支持跨可用区复制和条件事务的实现；KV 不可用时系统 fail closed，不尝试依靠 Worker 内存继续推进。
 
@@ -1383,6 +1395,8 @@ Handler 必须把 Provider 的原始错误归一化为以上类别后再返回 O
 - Memory 命中率、引用率、写入量和用户撤销率。
 
 每次唤醒创建一个 Trace，使用 Span Link 连接跨暂停阶段的调用，避免把数小时 Run 强行建模为单个常驻 Span。**成本账本由已提交 Step 记录的 `usage` 字段投影生成**（口径见 §5.3.2：只认已提交 Step，并发重复执行不计入用户预算），并在每次迁移前由 Budget Policy 检查。
+
+**遥测载荷的 PII 边界**：Trace/Span 属性与指标标签只允许结构化维度（租户/Run/Step 标识、计数、延迟、字节数）,不得内联消息原文、工具参数或模型输出——它们属于审计域,按 §12 的加密与保留策略治理;遥测中确需关联时只存 `ArtifactRef` 与内容摘要。标签基数有上限（禁止把自由文本直接作为 label),防止时序库维度爆炸。
 
 ### 13.1 目标水位（初值，随压测校准）
 
@@ -1790,6 +1804,8 @@ elastic-harness/                     # 单一代码仓
 | Timer 陈旧判据 | `stateEnterCounter` 而非 `stateVersion` | 同一状态内的迁移也推进 `stateVersion`，用它判断会误杀有效 Timer |
 | Registry 可用性 | 无状态多副本 + 共享 KV + JWKS 离线验签 | Registry 非运行时热路径:故障只阻断注册/解析/吊销增量,不阻断在途 Run 与 MQ 写入 |
 | 流推送扩展 | 无状态 Stream Gateway + EventIndex 断线补齐 | 任意副本数水平扩展,有序性来自 sequence 而非连接粘性 |
+| Device 身份 | Enrollment(预置 token/mTLS) + `kind: device` 短期凭证 + sessionEpoch 绑定校验 | 离线 Agent 的伪造回传在鉴权层被拒,旧会话回传按 late event 处理 |
+| 队列分区 | 有限常量分区 + 路由键哈希 | 分区数随吞吐规划,不随 Run 数无界增长;权威有序性由 EventIndex 保证 |
 
 该架构的最小核心不是“调用一次模型”，而是：**可靠接受一个事实，确定性推进一次状态，幂等地产生副作用，持久化检查点，再由事件驱动下一次推进。**
 
@@ -1835,4 +1851,5 @@ elastic-harness/                     # 单一代码仓
 | stateEnterCounter | 进入新状态时递增的计数器；判断 Timer / 迟到 Signal 是否属于当前状态实例 |
 | Platform Principal | 非 Handler 的平台组件（Relay、Timer、API）的 MQ 写入身份；与 Handler 同一 JWT 路径，claims 标注 `kind: platform` |
 | JWKS | Registry 公布的签名公钥集合（按 `kid` 索引）；MQ Gateway 与 API 离线验签,不依赖 Registry 存活 |
+| Enrollment | Device 首次注册的身份核验流程：预置 enrollment token 或 mTLS 证书;管理操作,默认不开放 |
 | ledgerVersion | Effect Ledger 的条目版本；`effectId + ledgerVersion` CAS 是派发权的唯一裁决点 |
