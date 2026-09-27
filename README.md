@@ -20,10 +20,64 @@
 
 | | |
 |---|---|
-| 版本 | 0.0.0(架构设计阶段) |
-| 代码 | 尚未生成 |
+| 版本 | 0.1.0（Phase 1 已落地） |
+| 代码 | Go multi-module workspace：`core` + 13 个 component + 6 个 adapter + standalone 组合根 |
 | 文档 | `docs/arch.md` v1.0（Phase 1 基线） |
-| 当前阶段 | 待进入 **Phase 1** —— 最小可恢复闭环(MVP) |
+| 当前阶段 | **Phase 1 完成** —— 最小可恢复闭环（E2E + 故障注入全绿，见 `docs/phase1-tasks.md`） |
+
+## 快速开始（standalone）
+
+要求：Go 1.24+（go.work 多 module 联调，无需安装额外依赖）。
+
+```powershell
+# 构建单一二进制到 bin/elastic-harness.exe
+.\scripts\build.ps1
+
+# 运行全部 module 测试
+.\scripts\test.ps1
+
+# 启动（默认监听 127.0.0.1:8080，数据落在 .\local-data）
+.\bin\elastic-harness.exe
+# 自定义：.\bin\elastic-harness.exe -listen 127.0.0.1:9090 -data D:\data\harness
+```
+
+standalone 内置演示闭环：本地 SQLite 权威状态 + 内嵌双队列 + 本地对象存储 + 演示 Provider（首轮发起 `echo` 工具调用，次轮收敛最终回复）。
+
+### API 调用示例
+
+```bash
+# 1. 创建 Chat
+curl -s -X POST http://127.0.0.1:8080/v1/chats \
+  -H 'Content-Type: application/json' -d '{"tenantId":"demo"}'
+# → {"chatId":"chat_..."}
+
+# 2. 写入用户消息
+curl -s -X POST http://127.0.0.1:8080/v1/chats/<chatId>/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"demo","role":"user","content":"请调用 echo 工具"}'
+
+# 3. 创建 Run（自动按内嵌 Harness Definition 执行：LLM → Tool → LLM）
+curl -s -X POST http://127.0.0.1:8080/v1/chats/<chatId>/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"demo","prompt":"请调用 echo 工具"}'
+# → {"runId":"run_...", "lifecycleStatus":"runnable", ...}
+
+# 4. 查询 Run 状态 / 步骤 / Effect Ledger / Inbox
+curl -s http://127.0.0.1:8080/v1/runs/<runId>        -H 'X-Tenant-ID: demo'
+curl -s http://127.0.0.1:8080/v1/runs/<runId>/steps  -H 'X-Tenant-ID: demo'
+curl -s http://127.0.0.1:8080/v1/runs/<runId>/effects -H 'X-Tenant-ID: demo'
+curl -s http://127.0.0.1:8080/v1/runs/<runId>/inbox  -H 'X-Tenant-ID: demo'
+
+# 5. SSE 实时事件流（断线后用上次收到的 id: 值续传）
+curl -N http://127.0.0.1:8080/v1/runs/<runId>/stream -H 'X-Tenant-ID: demo'
+curl -N "http://127.0.0.1:8080/v1/runs/<runId>/stream?after=<cursor>" -H 'X-Tenant-ID: demo'
+
+# 6. 取消进行中的 Run
+curl -s -X POST http://127.0.0.1:8080/v1/runs/<runId>/cancel \
+  -H 'Content-Type: application/json' -d '{"tenantId":"demo"}'
+```
+
+Query/SSE 接口用 `X-Tenant-ID` 头做租户归属校验；SSE 事件 `id` 为 HMAC 签名 cursor（15 分钟有效），重复事件由客户端按 eventId 去重。
 
 ## 架构核心
 
@@ -74,22 +128,46 @@ Command Service ─→ KV (权威状态) ─→ StateEventQueue (唤醒) ─→ 
 
 ```text
 .
-├── README.md           # 本文件
-└── docs/
-    └── arch.md         # 总体架构文档(单一事实源,待按主题拆分)
+├── core/                 # 零基础设施依赖：domain / effects / ports / qname
+├── components/           # 每能力组件一个 module（只依赖 core 与更底层组件）
+│   ├── api/                  # Command/Query/SSE HTTP 服务
+│   ├── effect-dispatcher/    # 两相派发（Ledger CAS → Provider → 回执）
+│   ├── event-projector/      # Outbox Relay + 事件投影
+│   ├── execution-profile/    # 执行预算/命名空间约束
+│   ├── handler-registry/     # 注册/能力解析/心跳 + EdDSA JWT/JWKS
+│   ├── harness-definition/   # Definition IR、校验、不可变版本仓库
+│   ├── llm-handler/          # LLM 状态 Handler（pure 内联）
+│   ├── memory-handler/       # Memory Handler（Phase 1 stub）
+│   ├── onstate-runtime/      # 通用 onState 内核（CAS + Inbox + 自续跑）
+│   ├── timer-reconciler/     # 持久 Timer + 停滞 Run 兜底重唤醒
+│   ├── tool-executor/        # 工具执行编排
+│   ├── tool-handler/         # 工具状态 Handler（两相派发 + 回调 Timer）
+│   └── tool-registry/        # 显式 Manifest + Revision 固定
+├── adapters/             # 基础设施扩展（实现 core/ports）
+│   ├── kv-sqlite/            # SQLite WAL 权威状态（CAS + fencing token）
+│   ├── ceq-embedded/         # 内嵌 ChatEventQueue
+│   ├── seq-embedded/         # 内嵌 StateEventQueue
+│   ├── objectstore-local/    # 本地文件对象存储
+│   ├── modelprovider-openai/ # OpenAI 兼容 Provider
+│   └── toolexecutor-http/    # 单协议 HTTP 工具执行器
+├── apps/standalone-app/  # 官方组合根范本（唯一允许 import adapter 的应用）
+├── deploy/               # 部署拓扑
+├── schemas/              # 消息 schema
+├── scripts/              # build.ps1 / test.ps1
+└── docs/                 # arch.md（单一事实源）+ phase1-tasks.md（实施账本）
 ```
 
-> 说明:Phase 1 启动后,代码骨架采用 Go multi-module monorepo——`core`(零基础设施依赖)+ `components/`(每组件一个 module)+ `adapters/`(基础设施扩展,按需引入)+ `assemblies/`(组合根),参见 arch.md §15。
+> 依赖单向：`core` 不 import 任何 adapter；只有 `apps/*` 组合根允许 import adapter（arch.md §15）。
 
 ## 路线图
 
-- **Phase 1 — 最小可恢复闭环**:Chat/Run/Harness Definition IR/`onState` 内核/Handler Registry(注册/心跳/JWT)/LLM+Tool Handler/Outbox/SSE/对象产物/取消与基础重试。
+- **Phase 1 — 最小可恢复闭环**（✅ 已完成，验收见 `docs/phase1-tasks.md`）：Chat/Run/Harness Definition IR/`onState` 内核/Handler Registry(注册/心跳/JWT)/LLM+Tool Handler/Outbox/SSE/对象产物/取消与基础重试/端到端故障注入。
 - **Phase 2 — 生产可用**:多租户 IAM、MCP/A2A/RAG、远程 Handler、长期 Memory、可重试失败与 `BLOCKED` Run 的运维闭环、限流熔断降级。
 - **Phase 3 — 生态规模化**:插件 SDK、可视化编排、Run fork/replay、语义缓存、跨区域主动-主动。
 
 ## 贡献
 
-目前项目处于架构设计阶段,欢迎围绕 `docs/arch.md` 提出 issue 与评审意见。代码层尚未开放贡献。
+Phase 1 代码已落地。架构/语义/不变量变更遵循「先改 `docs/arch.md` 再改代码」；实施进度与验收状态见 `docs/phase1-tasks.md`。欢迎围绕 `docs/arch.md` 提出 issue 与评审意见。
 
 ---
 
