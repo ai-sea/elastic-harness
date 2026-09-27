@@ -256,8 +256,8 @@ func (s *fakeStore) AcquireExecution(context.Context, string, string, time.Durat
 	return ports.ExecutionLoad{}, nil
 }
 func (s *fakeStore) CommitTransition(context.Context, ports.TransitionCommit) error { return nil }
-func (s *fakeStore) ReleaseLease(context.Context, string, int64) error             { return nil }
-func (s *fakeStore) Steps(context.Context, string) ([]domain.Step, error)          { return nil, nil }
+func (s *fakeStore) ReleaseLease(context.Context, string, int64) error              { return nil }
+func (s *fakeStore) Steps(context.Context, string) ([]domain.Step, error)           { return nil, nil }
 func (s *fakeStore) Events(context.Context, string, int64, int) ([]domain.EventEnvelope, error) {
 	return nil, nil
 }
@@ -271,11 +271,17 @@ func (s *fakeStore) DueTimers(context.Context, time.Time, int) ([]effects.Timer,
 func (s *fakeStore) FireTimer(context.Context, string, int64, effects.StateSignal, ports.OutboxRecord) (bool, error) {
 	return false, nil
 }
-func (s *fakeStore) PendingOutbox(context.Context, int) ([]ports.OutboxRecord, error) { return nil, nil }
-func (s *fakeStore) MarkOutboxPublished(context.Context, string) error               { return nil }
+func (s *fakeStore) PendingOutbox(context.Context, int) ([]ports.OutboxRecord, error) {
+	return nil, nil
+}
+func (s *fakeStore) MarkOutboxPublished(context.Context, string) error { return nil }
 func (s *fakeStore) RunnableWithoutSignal(context.Context, int) ([]domain.RunSnapshot, error) {
 	return nil, nil
 }
+func (s *fakeStore) StalledRuns(context.Context, time.Time, int) ([]domain.RunSnapshot, error) {
+	return nil, nil
+}
+func (s *fakeStore) EnqueueHint(context.Context, ports.OutboxRecord) error { return nil }
 
 func equal(left, right []string) bool {
 	if len(left) != len(right) {

@@ -226,3 +226,7 @@ func (s *recordingStore) MarkOutboxPublished(context.Context, string) error { re
 func (s *recordingStore) RunnableWithoutSignal(context.Context, int) ([]domain.RunSnapshot, error) {
 	return nil, nil
 }
+func (s *recordingStore) StalledRuns(context.Context, time.Time, int) ([]domain.RunSnapshot, error) {
+	return nil, nil
+}
+func (s *recordingStore) EnqueueHint(context.Context, ports.OutboxRecord) error { return nil }

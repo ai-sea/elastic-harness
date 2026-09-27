@@ -198,7 +198,11 @@ func (a *application) start(
 		if _, err := timerReconciler.FireDueTimers(ctx, 100); err != nil {
 			return err
 		}
-		_, err := timerReconciler.RepairRunnable(ctx, 100)
+		if _, err := timerReconciler.RepairRunnable(ctx, 100); err != nil {
+			return err
+		}
+		// Worker 崩溃/提示丢失的兜底：为租约失效但 Inbox 仍有未消费 Signal 的 Run 补发提示（§11.1）。
+		_, err := timerReconciler.ReawakenStalled(ctx, 100)
 		return err
 	}, logger)
 	a.runLoop(ctx, 20*time.Second, func() error {

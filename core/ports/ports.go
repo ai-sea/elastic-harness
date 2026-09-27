@@ -112,6 +112,13 @@ type StateStore interface {
 	PendingOutbox(context.Context, int) ([]OutboxRecord, error)
 	MarkOutboxPublished(context.Context, string) error
 	RunnableWithoutSignal(context.Context, int) ([]domain.RunSnapshot, error)
+	// StalledRuns 扫描「Inbox 仍有未消费 Signal、但租约已失效」的非终态 Run。
+	// 这是 Worker 崩溃、唤醒提示丢失后的兜底发现手段（§11.1）——队列只是提示，
+	// Inbox 才是事实来源，必须有第二条不依赖提示的唤醒路径。
+	StalledRuns(context.Context, time.Time, int) ([]domain.RunSnapshot, error)
+	// EnqueueHint 只写入一条 Outbox 唤醒提示，不触碰任何业务状态。
+	// Reconciler 用它为停滞 Run 补发提示；最终迁移仍由 onState 经 CAS 提交。
+	EnqueueHint(context.Context, OutboxRecord) error
 }
 
 type Queue interface {

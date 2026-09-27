@@ -83,3 +83,25 @@ func (r *Reconciler) RepairRunnable(ctx context.Context, limit int) (int, error)
 	}
 	return repaired, nil
 }
+
+// ReawakenStalled 为「Inbox 仍有未消费 Signal、但租约已失效」的 Run 补发唤醒提示
+// （§11.1：Worker 执行中崩溃、StateEventQueue 提示丢失的兜底路径）。
+// 只补提示、不改业务状态；重复提示无害——消费端由 Inbox 去重与 CAS 裁决。
+func (r *Reconciler) ReawakenStalled(ctx context.Context, limit int) (int, error) {
+	runs, err := r.store.StalledRuns(ctx, r.now(), limit)
+	if err != nil {
+		return 0, err
+	}
+	reawakened := 0
+	for _, run := range runs {
+		payload, _ := json.Marshal(map[string]string{"runId": run.RunID})
+		hint := ports.OutboxRecord{
+			ID: r.ids.New("out_"), Channel: "state", Key: run.RunID, Payload: payload, CreatedAt: r.now(),
+		}
+		if err := r.store.EnqueueHint(ctx, hint); err != nil {
+			return reawakened, err
+		}
+		reawakened++
+	}
+	return reawakened, nil
+}

@@ -495,6 +495,23 @@ WHERE r.lifecycle=? AND NOT EXISTS (
 ) LIMIT ?`, domain.LifecycleRunnable, limit)
 }
 
+func (s *Store) StalledRuns(ctx context.Context, now time.Time, limit int) ([]domain.RunSnapshot, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	return queryJSON[domain.RunSnapshot](ctx, s.database, `SELECT r.body FROM runs r
+WHERE r.lifecycle<>? AND EXISTS (
+  SELECT 1 FROM inbox i WHERE i.run_id=r.run_id AND i.consumed_step IS NULL
+) AND (r.lease_expires_at IS NULL OR r.lease_expires_at<=?) LIMIT ?`,
+		domain.LifecycleTerminal, formatTime(now), limit)
+}
+
+func (s *Store) EnqueueHint(ctx context.Context, record ports.OutboxRecord) error {
+	return s.inTransaction(ctx, func(tx *sql.Tx) error {
+		return insertOutbox(ctx, tx, []ports.OutboxRecord{record})
+	})
+}
+
 func insertSignal(ctx context.Context, tx *sql.Tx, signal effects.StateSignal) error {
 	body, err := marshal(signal)
 	if err != nil {
