@@ -30,15 +30,15 @@ Phase 1 只有同时满足以下条件才算完成：
   - [ ] Step、EventIndex、Outbox、Invocation、Timer、Effect 独立记录
   - [x] 通用 `onState` 内核与 Transition Rule 推导
 - [ ] P3 两相派发与恢复
-  - [ ] Effect `PENDING → DISPATCHED → COMMITTED` 独立 ledgerVersion CAS
-  - [ ] 非幂等 Effect 的 recover/manual 路径
-  - [ ] 持久 Timer 使用 `stateEnterCounter` 判定
-  - [ ] Outbox Relay 与 Reconciler
+  - [x] Effect `PENDING → DISPATCHED → COMMITTED` 独立 ledgerVersion CAS
+  - [x] 非幂等 Effect 的 recover/manual 路径
+  - [x] 持久 Timer 使用 `stateEnterCounter` 判定
+  - [x] Outbox Relay 与 Reconciler
 - [ ] P4 Handler 与适配器
   - [ ] LLM Handler 与单模型 Provider Adapter（pure 内联）
   - [ ] Tool Handler、单协议 Tool Executor（非 pure 两相）
   - [ ] 本地 Object Store 与 ArtifactRef
-  - [ ] 内嵌 ChatEventQueue / StateEventQueue
+  - [x] 内嵌 ChatEventQueue / StateEventQueue
 - [ ] P5 API、SSE 与 standalone
   - [ ] Chat/Message/Run/Cancel Command API
   - [ ] Run/Event/Step/Effect/Inbox Query API

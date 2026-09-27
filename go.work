@@ -5,9 +5,14 @@ go 1.24
 
 use (
 	./adapters/kv-sqlite
+	./adapters/ceq-embedded
+	./adapters/seq-embedded
+	./components/effect-dispatcher
+	./components/event-projector
 	./components/harness-definition
 	./components/handler-registry
 	./components/onstate-runtime
+	./components/timer-reconciler
 	./core
 )
 
