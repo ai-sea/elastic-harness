@@ -27,6 +27,15 @@ func (h *Handler) OnState(_ context.Context, execution ports.StateExecutionConte
 	if execution.Node.SideEffect == domain.SideEffectPure {
 		return effects.StateOutcome{}, errors.New("Tool Handler 不得绑定 pure 状态")
 	}
+	// 回调 Timer 到期即「丢失回调」（§11.1）：等待中的工具调用未在 Callback 期限内
+	// 回执，按 timedOut 终态收敛。不得重新生成 Effect 意图——同一 effectId 再次落账
+	// 会造成同一外部调用被执行两次。
+	if signal.Type.Equal(qname.MustParse("harness/timer.fired")) {
+		patch, _ := json.Marshal(map[string]any{"pendingToolCalls": nil})
+		return effects.StateOutcome{
+			Kind: effects.OutcomeTerminalFailure, Result: "timedOut", ErrorCode: "timedOut", ContextPatch: patch,
+		}, nil
+	}
 	if signal.Type.Equal(qname.MustParse("harness/effect.completed")) {
 		var result map[string]any
 		if err := json.Unmarshal(signal.Payload, &result); err != nil {
