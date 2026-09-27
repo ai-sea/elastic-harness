@@ -11,7 +11,7 @@ Phase 1 只有同时满足以下条件才算完成：
 3. E2E 自动化测试走通 Chat → Message → Run → LLM → Tool → 最终消息；✅（`apps/standalone-app/e2e_test.go: TestAgentLoopEndToEnd`）
 4. 故障注入覆盖重复消息、Worker 中断、丢失提示/回调、完成与超时竞争、Reconciler 恢复；✅（`apps/standalone-app/fault_test.go`，7 个场景）
 5. `docs/arch.md` §11.2 的 13 条不变量均有契约测试或 E2E 断言；✅（见下方不变量覆盖表）
-6. 示例配置、启动方式与 API 调用方法已写入 README。⬜（待补）
+6. 示例配置、启动方式与 API 调用方法已写入 README。✅（README「快速开始（standalone）」一节）
 
 ## 不变量覆盖表（§11.2）
 
@@ -88,3 +88,4 @@ Phase 1 只有同时满足以下条件才算完成：
 - 2026-09-27：完成 T0–T24 全部实现（core 契约、6 个 adapter、13 个 component、standalone 组合根），E2E happy-path 走通。
 - 2026-09-27：补齐 §11.1 故障矩阵两处缺口——tool-handler 处理 `harness/timer.fired` 回调超时收敛；Reconciler 新增 `ReawakenStalled` 为「租约失效但 Inbox 有未消费 Signal」的 Run 补发提示。
 - 2026-09-27：完成 T25/T26——`apps/standalone-app/fault_test.go` 7 个故障注入场景全绿；补齐不变量 #7（绑定版本固定）与 #8（无明文 Secret）契约测试，13 条不变量全部有测试断言。完成定义 1–5 达成，仅剩 README 示例（条件 6）。
+- 2026-09-27：README 补 standalone 构建/启动/API 示例并更新仓库结构——**完成定义 6 条全部达成，Phase 1 收官**。
