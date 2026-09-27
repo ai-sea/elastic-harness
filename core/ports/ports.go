@@ -164,6 +164,7 @@ type ModelProvider interface {
 type ToolRequest struct {
 	EffectID       string
 	IdempotencyKey string
+	TenantID       string
 	Tool           qname.QName
 	Input          json.RawMessage
 }
@@ -177,6 +178,17 @@ type ToolResult struct {
 type ToolExecutor interface {
 	Invoke(context.Context, ToolRequest) (ToolResult, error)
 	Recover(context.Context, string) (ToolResult, bool, error)
+}
+
+type ToolRegistration struct {
+	RegistrationID string
+	Revision       int64
+	Name           qname.QName
+	Endpoint       string
+}
+
+type ToolCatalog interface {
+	ResolveTool(context.Context, string, qname.QName) (ToolRegistration, error)
 }
 
 type EffectExecutor interface {

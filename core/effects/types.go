@@ -73,6 +73,7 @@ const (
 
 type EffectLedgerEntry struct {
 	EffectID       string            `json:"effectId"`
+	TenantID       string            `json:"tenantId"`
 	RunID          string            `json:"runId"`
 	Kind           qname.QName       `json:"kind"`
 	Status         EffectStatus      `json:"status"`

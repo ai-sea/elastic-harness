@@ -313,7 +313,7 @@ func (e *Engine) ledgerEntries(snapshot domain.RunSnapshot, node domain.StateNod
 	entries := make([]effects.EffectLedgerEntry, 0, len(intents))
 	for _, intent := range intents {
 		entry := effects.EffectLedgerEntry{
-			EffectID: intent.EffectID, RunID: snapshot.RunID, Kind: intent.Kind,
+			EffectID: intent.EffectID, TenantID: snapshot.TenantID, RunID: snapshot.RunID, Kind: intent.Kind,
 			Status: effects.EffectPending, LedgerVersion: 1,
 			Intent: cloneJSON(intent.Intent), IntentRef: intent.IntentRef,
 			IdempotencyKey: intent.IdempotencyKey, SideEffect: node.SideEffect,

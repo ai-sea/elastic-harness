@@ -2,12 +2,15 @@ package dispatcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ai-sea/elastic-harness/core/domain"
 	"github.com/ai-sea/elastic-harness/core/effects"
 	"github.com/ai-sea/elastic-harness/core/ports"
+	"github.com/ai-sea/elastic-harness/core/qname"
 )
 
 var ErrUncertainEffect = errors.New("Effect 外部结果不确定")
@@ -42,6 +45,9 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 			if err := d.store.CommitEffect(ctx, claimed.EffectID, claimed.LedgerVersion, externalRef, resultRef); err != nil {
 				return dispatched, err
 			}
+			if err := d.signalCompleted(ctx, claimed, resultRef); err != nil {
+				return dispatched, err
+			}
 			dispatched++
 			continue
 		}
@@ -62,10 +68,31 @@ func (d *Dispatcher) resolveUncertainNonIdempotent(ctx context.Context, entry ef
 		return err
 	}
 	if completed {
-		return d.store.CommitEffect(ctx, entry.EffectID, entry.LedgerVersion, externalRef, resultRef)
+		if err := d.store.CommitEffect(ctx, entry.EffectID, entry.LedgerVersion, externalRef, resultRef); err != nil {
+			return err
+		}
+		return d.signalCompleted(ctx, entry, resultRef)
 	}
 	if err := d.store.MarkEffectManual(ctx, entry.EffectID, entry.LedgerVersion); err != nil {
 		return err
 	}
 	return ErrUncertainEffect
+}
+
+func (d *Dispatcher) signalCompleted(ctx context.Context, entry effects.EffectLedgerEntry, resultRef string) error {
+	now := time.Now().UTC()
+	payload, _ := json.Marshal(map[string]string{"effectId": entry.EffectID, "resultRef": resultRef})
+	signal := effects.StateSignal{
+		SignalID: "sig_" + entry.EffectID, RunID: entry.RunID,
+		Type: qname.MustParse("harness/effect.completed"), DedupeKey: entry.EffectID + "/completed",
+		Payload: payload, OccurredAt: now,
+	}
+	wakeup, _ := json.Marshal(map[string]string{"runId": entry.RunID, "dedupeKey": signal.DedupeKey})
+	_, err := d.store.PutSignal(ctx, signal, ports.OutboxRecord{
+		ID: "out_" + entry.EffectID, Channel: "state", Key: entry.RunID, Payload: wakeup, CreatedAt: now,
+	})
+	if errors.Is(err, ports.ErrTerminal) {
+		return nil
+	}
+	return err
 }

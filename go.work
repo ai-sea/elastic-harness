@@ -5,15 +5,61 @@ go 1.24
 
 use (
 	./adapters/kv-sqlite
+	./adapters/modelprovider-openai
+	./adapters/objectstore-local
 	./adapters/ceq-embedded
 	./adapters/seq-embedded
+	./adapters/toolexecutor-http
+	./apps/standalone-app
 	./components/effect-dispatcher
+	./components/api
+	./components/execution-profile
 	./components/event-projector
 	./components/harness-definition
 	./components/handler-registry
 	./components/onstate-runtime
 	./components/timer-reconciler
+	./components/llm-handler
+	./components/tool-handler
+	./components/tool-executor
+	./components/tool-registry
 	./core
 )
 
 replace github.com/ai-sea/elastic-harness/core v0.0.0 => ./core
+
+replace github.com/ai-sea/elastic-harness/adapters/ceq-embedded v0.0.0 => ./adapters/ceq-embedded
+
+replace github.com/ai-sea/elastic-harness/adapters/kv-sqlite v0.0.0 => ./adapters/kv-sqlite
+
+replace github.com/ai-sea/elastic-harness/adapters/modelprovider-openai v0.0.0 => ./adapters/modelprovider-openai
+
+replace github.com/ai-sea/elastic-harness/adapters/objectstore-local v0.0.0 => ./adapters/objectstore-local
+
+replace github.com/ai-sea/elastic-harness/adapters/seq-embedded v0.0.0 => ./adapters/seq-embedded
+
+replace github.com/ai-sea/elastic-harness/adapters/toolexecutor-http v0.0.0 => ./adapters/toolexecutor-http
+
+replace github.com/ai-sea/elastic-harness/components/api v0.0.0 => ./components/api
+
+replace github.com/ai-sea/elastic-harness/components/effect-dispatcher v0.0.0 => ./components/effect-dispatcher
+
+replace github.com/ai-sea/elastic-harness/components/event-projector v0.0.0 => ./components/event-projector
+
+replace github.com/ai-sea/elastic-harness/components/execution-profile v0.0.0 => ./components/execution-profile
+
+replace github.com/ai-sea/elastic-harness/components/handler-registry v0.0.0 => ./components/handler-registry
+
+replace github.com/ai-sea/elastic-harness/components/harness-definition v0.0.0 => ./components/harness-definition
+
+replace github.com/ai-sea/elastic-harness/components/llm-handler v0.0.0 => ./components/llm-handler
+
+replace github.com/ai-sea/elastic-harness/components/onstate-runtime v0.0.0 => ./components/onstate-runtime
+
+replace github.com/ai-sea/elastic-harness/components/timer-reconciler v0.0.0 => ./components/timer-reconciler
+
+replace github.com/ai-sea/elastic-harness/components/tool-executor v0.0.0 => ./components/tool-executor
+
+replace github.com/ai-sea/elastic-harness/components/tool-handler v0.0.0 => ./components/tool-handler
+
+replace github.com/ai-sea/elastic-harness/components/tool-registry v0.0.0 => ./components/tool-registry
