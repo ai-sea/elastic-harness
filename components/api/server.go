@@ -52,9 +52,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/chats/{chatId}/messages", s.createMessage)
 	s.mux.HandleFunc("POST /v1/chats/{chatId}/runs", s.createRun)
 	// Go 1.22 net/http ServeMux 要求 wildcard 段以 '}' 结束,
-// 不支持 "{runId}:cancel" 风格;Phase 1 把 §9.1 的 ":cancel" 改写为 "/cancel"
-// (语义不变,架构文档已加注)。resume 未在 Phase 1 范围,暂未实现。
-s.mux.HandleFunc("POST /v1/runs/{runId}/cancel", s.cancelRun)
+	// 不支持 "{runId}:cancel" 风格;Phase 1 把 §9.1 的 ":cancel" 改写为 "/cancel"
+	// (语义不变,架构文档已加注)。resume 未在 Phase 1 范围,暂未实现。
+	s.mux.HandleFunc("POST /v1/runs/{runId}/cancel", s.cancelRun)
 	s.mux.HandleFunc("GET /v1/runs/{runId}", s.getRun)
 	s.mux.HandleFunc("GET /v1/runs/{runId}/events", s.getEvents)
 	s.mux.HandleFunc("GET /v1/runs/{runId}/steps", s.getSteps)
