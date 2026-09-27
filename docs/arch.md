@@ -1082,6 +1082,7 @@ Signal 一经入队不可修改；`consumedByStep` 由消费它的迁移在同�
 - **列表查询统一 cursor 分页**（`?limit=&cursor=`，cursor 为服务端签发的不透明令牌），禁止无界全量枚举。
 - **限流与配额前置**：按租户/主体维度对命令与订阅端点强制限流（令牌桶），超限返回 `429` + `Retry-After`，不进入命令处理。
 - API 返回已接受的命令、资源 ID 和事件游标，不承诺 Run 在请求连接内完成。
+- **路径表达**：本节列出的 `…/{runId}:cancel`、`…:publish`、`…:disable` 等 `:action` 形态是 RPC 风格端点语义。**Phase 1 standalone 实现受 Go 1.22 `net/http` ServeMux 限制**（wildcard 段必须以 `}` 结束），把 `:cancel` / `:resume` 改写为 `/cancel` 与 `/resume`；语义不变，结构化 RPC 风格保留在 Path Action 命名上。其余 `:publish` / `:disable` / `:deregister` / `:refresh-discovery` / `:decide` / `:report` / `:checkout` / `:fork` 在 Phase 1 暂未落地，Phase 2/3 引入时优先复用 `/<action>` 表达，避免 Go mux 限制扩散。
 
 ### 9.2 Query 与 Stream API
 
