@@ -20,6 +20,7 @@ use (
 	./components/onstate-runtime
 	./components/timer-reconciler
 	./components/llm-handler
+	./components/memory-handler
 	./components/tool-handler
 	./components/tool-executor
 	./components/tool-registry
@@ -53,6 +54,8 @@ replace github.com/ai-sea/elastic-harness/components/handler-registry v0.0.0 => 
 replace github.com/ai-sea/elastic-harness/components/harness-definition v0.0.0 => ./components/harness-definition
 
 replace github.com/ai-sea/elastic-harness/components/llm-handler v0.0.0 => ./components/llm-handler
+
+replace github.com/ai-sea/elastic-harness/components/memory-handler v0.0.0 => ./components/memory-handler
 
 replace github.com/ai-sea/elastic-harness/components/onstate-runtime v0.0.0 => ./components/onstate-runtime
 
