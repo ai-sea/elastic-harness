@@ -20,9 +20,9 @@ Phase 1 只有同时满足以下条件才算完成：
   - [x] 建立领域类型、QName、Effect/Signal/Outcome 与 Port 契约
   - [ ] 建立全仓测试与二进制构建脚本
 - [ ] P1 定义与控制面
-  - [ ] Harness Definition IR、校验、不可变版本仓库
+  - [x] Harness Definition IR、校验、不可变版本仓库
   - [ ] Execution Profile 快照与绑定约束
-  - [ ] Handler Registry：注册、能力解析、心跳、EdDSA 短期 JWT/JWKS
+  - [x] Handler Registry：注册、能力解析、心跳、EdDSA 短期 JWT/JWKS
   - [ ] Tool Registry：显式 Manifest、Revision 固定、禁用
 - [ ] P2 权威状态与迁移内核
   - [ ] SQLite WAL 状态存储、多键事务、Run CAS 与 fencing token

@@ -6,5 +6,7 @@
 go 1.24
 
 use (
+	./components/harness-definition
+	./components/handler-registry
 	./core
 )
