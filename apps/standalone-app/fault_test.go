@@ -240,6 +240,67 @@ func TestSelfContinuationStopsAtStepBudget(t *testing.T) {
 	}
 }
 
+// 不变量 #7：Run 创建时固定的 Handler 绑定在生命周期内不变——
+// 即使注册中心随后出现了更新版本，进行中的 Run 仍按快照里的旧版本执行。
+func TestPinnedBindingsDoNotFollowNewHandlerVersions(t *testing.T) {
+	store := openMemoryStore(t)
+	def := twoStepDefinition()
+	definitions := definition.NewRepository()
+	if err := definitions.PutDraft(context.Background(), def); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := definitions.Publish(context.Background(), def.ID, def.Version); err != nil {
+		t.Fatal(err)
+	}
+	handlerRegistry, err := registry.New(registry.Options{
+		Issuer: "fault-test", Audience: "handlers", TokenTTL: time.Minute, HeartbeatTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := qname.MustParse("harness/test.step")
+	registerVersion(t, handlerRegistry, capability, "1.0.0", succeedHandler())
+	engine := runtime.New(store, definitions, handlerRegistry, runtime.Options{})
+	snapshot, err := engine.CreateRun(context.Background(), runtime.CreateRunRequest{
+		TenantID: "tenant-1", ChatID: "chat-1",
+		Harness: domain.HarnessRef{ID: def.ID, Version: def.Version}, Budget: domain.Budget{MaxSteps: 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run 创建后才出现的新版本：若被它接管，Run 会走向 failed 而非 completed。
+	registerVersion(t, handlerRegistry, capability, "2.0.0", scriptedHandler{
+		onState: func(ports.StateExecutionContext, effects.StateSignal) (effects.StateOutcome, error) {
+			return effects.StateOutcome{Kind: effects.OutcomeTerminalFailure, Result: "failed"}, nil
+		},
+	})
+
+	if err := engine.ProcessRun(context.Background(), snapshot.RunID, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := store.Steps(context.Background(), snapshot.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Handler.HandlerVersion != "1.0.0" {
+		t.Fatalf("进行中的 Run 必须沿用创建时固定的 1.0.0 绑定：%+v", steps)
+	}
+	if snapshot.ResolvedBindings["first"].HandlerVersion != "1.0.0" {
+		t.Fatalf("快照绑定被改写：%+v", snapshot.ResolvedBindings)
+	}
+}
+
+func registerVersion(t *testing.T, handlerRegistry *registry.Registry, capability qname.QName, version string, handler ports.StateHandler) {
+	t.Helper()
+	descriptor := ports.HandlerDescriptor{
+		HandlerID: capability, Version: version, Deployment: "in-process",
+		Capabilities: []ports.CapabilityDescriptor{{Capability: capability, Version: version}},
+	}
+	if _, err := handlerRegistry.Register(descriptor, handler, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type faultFixture struct {
 	store      *kvsqlite.Store
 	engine     *runtime.Engine

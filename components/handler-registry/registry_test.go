@@ -36,6 +36,33 @@ func TestJWTOnlyAcceptsEdDSAAndExpires(t *testing.T) {
 	}
 }
 
+// 不变量 #8：任何写入 KV、事件或日志的内容不落明文 Secret——
+// JWKS 只允许出现公钥分量，签发的 JWT 只允许携带注册 Claims。
+func TestJWKSAndTokensCarryNoSecretMaterial(t *testing.T) {
+	registry, err := New(Options{Issuer: "test", Audience: "handlers", TokenTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks := string(registry.JWKS())
+	if strings.Contains(jwks, `"d"`) || !strings.Contains(jwks, `"x"`) {
+		t.Fatalf("JWKS 必须只含公钥分量（x），不得含私钥分量（d）：%s", jwks)
+	}
+	token, err := registry.Register(descriptor("1.0.0"), nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := decodeSegment(strings.Split(token, ".")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(payload))
+	for _, forbidden := range []string{"private", "secret", "password", "credential"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("JWT Claims 不得携带任何疑似明文凭据字段（%s）：%s", forbidden, payload)
+		}
+	}
+}
+
 func TestResolvePinsHighestCompatibleVersion(t *testing.T) {
 	registry, err := New(Options{Issuer: "test", Audience: "handlers"})
 	if err != nil {
