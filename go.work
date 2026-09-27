@@ -1,12 +1,13 @@
-// ElasticHarness local development workspace.
-// Cross-module dependencies are pinned to published versions in each module's
-// go.mod; this workspace redirects them to local checkouts so we can iterate
-// without publishing every change. See docs/arch.md §15 (release rules).
+// ElasticHarness 本地开发工作区。
+// 各模块固定发布版本，本文件仅在本地将依赖重定向到工作区源码。
 
 go 1.24
 
 use (
+	./adapters/kv-sqlite
 	./components/harness-definition
 	./components/handler-registry
 	./core
 )
+
+replace github.com/ai-sea/elastic-harness/core v0.0.0 => ./core

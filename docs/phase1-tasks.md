@@ -25,7 +25,7 @@ Phase 1 只有同时满足以下条件才算完成：
   - [x] Handler Registry：注册、能力解析、心跳、EdDSA 短期 JWT/JWKS
   - [ ] Tool Registry：显式 Manifest、Revision 固定、禁用
 - [ ] P2 权威状态与迁移内核
-  - [ ] SQLite WAL 状态存储、多键事务、Run CAS 与 fencing token
+  - [x] SQLite WAL 状态存储、多键事务、Run CAS 与 fencing token
   - [ ] Inbox 去重/优先级/领取，RUNNABLE 同事务写 `entered`
   - [ ] Step、EventIndex、Outbox、Invocation、Timer、Effect 独立记录
   - [ ] 通用 `onState` 内核与 Transition Rule 推导
