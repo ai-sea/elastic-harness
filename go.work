@@ -7,6 +7,7 @@ use (
 	./adapters/kv-sqlite
 	./components/harness-definition
 	./components/handler-registry
+	./components/onstate-runtime
 	./core
 )
 

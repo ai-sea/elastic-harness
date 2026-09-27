@@ -161,6 +161,9 @@ func (s *Store) PutSignal(ctx context.Context, signal effects.StateSignal, outbo
 		}
 		inserted = result
 		if inserted {
+			if err := adjustPendingCount(ctx, tx, signal.RunID, 1, signal.OccurredAt); err != nil {
+				return err
+			}
 			return insertOutbox(ctx, tx, []ports.OutboxRecord{outbox})
 		}
 		return nil
@@ -425,6 +428,9 @@ func (s *Store) FireTimer(ctx context.Context, timerID string, enteredAtCounter 
 			if err := insertSignal(ctx, tx, signal); err != nil {
 				return err
 			}
+			if err := adjustPendingCount(ctx, tx, signal.RunID, 1, signal.OccurredAt); err != nil {
+				return err
+			}
 			if err := insertOutbox(ctx, tx, []ports.OutboxRecord{outbox}); err != nil {
 				return err
 			}
@@ -515,6 +521,31 @@ signal_id,run_id,dedupe_key,priority,occurred_at,consumed_step,body
 	}
 	count, _ := result.RowsAffected()
 	return count == 1, nil
+}
+
+func adjustPendingCount(ctx context.Context, tx *sql.Tx, runID string, delta int64, occurredAt time.Time) error {
+	var body []byte
+	if err := tx.QueryRowContext(ctx, `SELECT body FROM runs WHERE run_id=?`, runID).Scan(&body); err != nil {
+		return mapReadError(err)
+	}
+	snapshot, err := unmarshal[domain.RunSnapshot](body)
+	if err != nil {
+		return err
+	}
+	snapshot.PendingCount += delta
+	if snapshot.PendingCount < 0 {
+		return errors.New("pendingCount 不得为负数")
+	}
+	if delta > 0 && (snapshot.OldestPendingAt == nil || occurredAt.Before(*snapshot.OldestPendingAt)) {
+		value := occurredAt
+		snapshot.OldestPendingAt = &value
+	}
+	updated, err := marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE runs SET body=? WHERE run_id=?`, updated, runID)
+	return err
 }
 
 func insertEffect(ctx context.Context, tx *sql.Tx, entry effects.EffectLedgerEntry) error {

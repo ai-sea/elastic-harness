@@ -26,9 +26,9 @@ Phase 1 只有同时满足以下条件才算完成：
   - [ ] Tool Registry：显式 Manifest、Revision 固定、禁用
 - [ ] P2 权威状态与迁移内核
   - [x] SQLite WAL 状态存储、多键事务、Run CAS 与 fencing token
-  - [ ] Inbox 去重/优先级/领取，RUNNABLE 同事务写 `entered`
+  - [x] Inbox 去重/优先级/领取，RUNNABLE 同事务写 `entered`
   - [ ] Step、EventIndex、Outbox、Invocation、Timer、Effect 独立记录
-  - [ ] 通用 `onState` 内核与 Transition Rule 推导
+  - [x] 通用 `onState` 内核与 Transition Rule 推导
 - [ ] P3 两相派发与恢复
   - [ ] Effect `PENDING → DISPATCHED → COMMITTED` 独立 ledgerVersion CAS
   - [ ] 非幂等 Effect 的 recover/manual 路径
