@@ -1,0 +1,39 @@
+# ---- Go build artifacts ----
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ---- Test/coverage ----
+*.test
+*.out
+coverage.txt
+*.cover
+
+# ---- Local dev artifacts ----
+*.local
+.env
+.env.*
+!.env.example
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ---- Module-local caches (each module owns its own) ----
+# Do NOT add a root-level /vendor. Module vendoring, if ever used, must be
+# triggered per-module and committed intentionally.
+
+# ---- Project-specific: adapter runtime state ----
+# Standalone assembly scratch (replaces etcd / sqlite blobs)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+runtime-data/
+local-data/

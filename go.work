@@ -1,0 +1,10 @@
+// ElasticHarness local development workspace.
+// Cross-module dependencies are pinned to published versions in each module's
+// go.mod; this workspace redirects them to local checkouts so we can iterate
+// without publishing every change. See docs/arch.md §15 (release rules).
+
+go 1.24
+
+use (
+	./core
+)
