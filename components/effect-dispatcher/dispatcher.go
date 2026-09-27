@@ -52,8 +52,14 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 			continue
 		}
 		if claimed.SideEffect == domain.SideEffectNonIdempotent {
-			if err := d.resolveUncertainNonIdempotent(ctx, claimed); err != nil {
-				return dispatched, fmt.Errorf("%w：%v", executeErr, err)
+			recovered, resolveErr := d.resolveUncertainNonIdempotent(ctx, claimed)
+			if resolveErr != nil {
+				// ErrUncertainEffect 必须作为被包裹哨兵返回，否则 §11.3 的
+				// 「不确定结果 → 人工处置」分类在调用链上丢失，退化为普通瞬时错误。
+				return dispatched, fmt.Errorf("%w：%v", resolveErr, executeErr)
+			}
+			if recovered {
+				dispatched++
 			}
 			continue
 		}
@@ -62,21 +68,25 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 	return dispatched, nil
 }
 
-func (d *Dispatcher) resolveUncertainNonIdempotent(ctx context.Context, entry effects.EffectLedgerEntry) error {
+// resolveUncertainNonIdempotent 返回 recovered=true 表示 recover 确认结果已提交。
+func (d *Dispatcher) resolveUncertainNonIdempotent(ctx context.Context, entry effects.EffectLedgerEntry) (bool, error) {
 	externalRef, resultRef, completed, err := d.executor.Recover(ctx, entry)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if completed {
-		if err := d.store.CommitEffect(ctx, entry.EffectID, entry.LedgerVersion, externalRef, resultRef); err != nil {
-			return err
+	if !completed {
+		if err := d.store.MarkEffectManual(ctx, entry.EffectID, entry.LedgerVersion); err != nil {
+			return false, err
 		}
-		return d.signalCompleted(ctx, entry, resultRef)
+		return false, ErrUncertainEffect
 	}
-	if err := d.store.MarkEffectManual(ctx, entry.EffectID, entry.LedgerVersion); err != nil {
-		return err
+	if err := d.store.CommitEffect(ctx, entry.EffectID, entry.LedgerVersion, externalRef, resultRef); err != nil {
+		return false, err
 	}
-	return ErrUncertainEffect
+	if err := d.signalCompleted(ctx, entry, resultRef); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (d *Dispatcher) signalCompleted(ctx context.Context, entry effects.EffectLedgerEntry, resultRef string) error {
