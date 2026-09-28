@@ -316,6 +316,7 @@ func (s *fakeStore) ledgerTrace() []string {
 }
 
 func (s *fakeStore) CreateChat(context.Context, domain.Chat) error       { return nil }
+func (s *fakeStore) GetChat(context.Context, string) (domain.Chat, error) { return domain.Chat{}, nil }
 func (s *fakeStore) AppendMessage(context.Context, domain.Message) error { return nil }
 func (s *fakeStore) CreateRun(context.Context, domain.RunSnapshot, effects.StateSignal, []ports.OutboxRecord) error {
 	return nil

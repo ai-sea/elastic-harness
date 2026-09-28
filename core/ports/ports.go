@@ -26,6 +26,7 @@ type StateExecutionContext struct {
 	Snapshot   domain.RunSnapshot
 	Node       domain.StateNode
 	Attempt    int
+	Invocations []effects.ToolInvocation
 }
 
 // StateHandler 有意不暴露生命周期和终局字段；只有运行时可由 Outcome 与 IR 推导它们。
@@ -76,6 +77,7 @@ type TransitionCommit struct {
 	Step                 domain.Step
 	Effects              []effects.EffectLedgerEntry
 	Invocations          []effects.ToolInvocation
+	InvocationUpdates    []effects.InvocationUpdate
 	Timers               []effects.Timer
 	Events               []domain.EventEnvelope
 	Outbox               []OutboxRecord
@@ -93,6 +95,7 @@ type OutboxRecord struct {
 
 type StateStore interface {
 	CreateChat(context.Context, domain.Chat) error
+	GetChat(context.Context, string) (domain.Chat, error)
 	AppendMessage(context.Context, domain.Message) error
 	CreateRun(context.Context, domain.RunSnapshot, effects.StateSignal, []OutboxRecord) error
 	GetRun(context.Context, string) (domain.RunSnapshot, error)
@@ -126,14 +129,12 @@ type StateStore interface {
 }
 
 type EffectResultCommit struct {
-	EffectID                  string
-	ExpectedLedgerVersion     int64
-	InvocationID              string
-	ExpectedInvocationVersion int64
-	ExternalRef               string
-	ResultRef                 string
-	Signal                    effects.StateSignal
-	Outbox                    OutboxRecord
+	EffectID              string
+	ExpectedLedgerVersion int64
+	ExternalRef           string
+	ResultRef             string
+	Signal                effects.StateSignal
+	Outbox                OutboxRecord
 }
 
 type Queue interface {

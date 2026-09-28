@@ -56,10 +56,19 @@ type StateOutcome struct {
 	Events          []domain.EventEnvelope   `json:"events,omitempty"`
 	Effects         []EffectIntent           `json:"effects,omitempty"`
 	ToolInvocations []ToolInvocation         `json:"toolInvocations,omitempty"`
+	InvocationUpdates []InvocationUpdate     `json:"invocationUpdates,omitempty"`
 	Timers          []TimerIntent            `json:"timers,omitempty"`
 	Usage           domain.Usage             `json:"usage"`
 	Invocations     []domain.InvocationTrace `json:"invocations,omitempty"`
 	ErrorCode       string                   `json:"errorCode,omitempty"`
+}
+
+type InvocationUpdate struct {
+	InvocationID      string           `json:"invocationId"`
+	ExpectedVersion   int64            `json:"expectedVersion"`
+	Status            InvocationStatus `json:"status"`
+	ExternalReference string           `json:"externalReference,omitempty"`
+	ResultRef         string           `json:"resultRef,omitempty"`
 }
 
 type EffectStatus string

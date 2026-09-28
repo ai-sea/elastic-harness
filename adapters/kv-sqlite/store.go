@@ -111,6 +111,14 @@ func (s *Store) CreateChat(ctx context.Context, chat domain.Chat) error {
 	return mapWriteError(err)
 }
 
+func (s *Store) GetChat(ctx context.Context, chatID string) (domain.Chat, error) {
+	var body []byte
+	if err := s.database.QueryRowContext(ctx, `SELECT body FROM chats WHERE chat_id=?`, chatID).Scan(&body); err != nil {
+		return domain.Chat{}, mapReadError(err)
+	}
+	return unmarshal[domain.Chat](body)
+}
+
 func (s *Store) AppendMessage(ctx context.Context, message domain.Message) error {
 	body, err := marshal(message)
 	if err != nil {
@@ -251,6 +259,11 @@ WHERE signal_id=? AND run_id=? AND consumed_step IS NULL`, commit.Step.StepSeq, 
 		}
 		for _, invocation := range commit.Invocations {
 			if err := insertInvocation(ctx, tx, invocation); err != nil {
+				return err
+			}
+		}
+		for _, update := range commit.InvocationUpdates {
+			if err := applyInvocationUpdate(ctx, tx, update); err != nil {
 				return err
 			}
 		}
@@ -442,11 +455,6 @@ WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.Ledger
 		count, _ := result.RowsAffected()
 		if count != 1 {
 			return ports.ErrConflict
-		}
-		if commit.InvocationID != "" {
-			if err := completeInvocation(ctx, tx, commit); err != nil {
-				return err
-			}
 		}
 		var lifecycle domain.LifecycleStatus
 		if err := tx.QueryRowContext(ctx, `SELECT lifecycle FROM runs WHERE run_id=?`, commit.Signal.RunID).Scan(&lifecycle); err != nil {
@@ -745,29 +753,30 @@ WHERE invocation_id=? AND status=? AND invocation_version=?`, invocation.Status,
 	return nil
 }
 
-func completeInvocation(ctx context.Context, tx *sql.Tx, commit ports.EffectResultCommit) error {
+func applyInvocationUpdate(ctx context.Context, tx *sql.Tx, update effects.InvocationUpdate) error {
 	var body []byte
-	if err := tx.QueryRowContext(ctx, `SELECT body FROM invocations WHERE invocation_id=?`, commit.InvocationID).Scan(&body); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT body FROM invocations WHERE invocation_id=?`, update.InvocationID).Scan(&body); err != nil {
 		return mapReadError(err)
 	}
 	invocation, err := unmarshal[effects.ToolInvocation](body)
 	if err != nil {
 		return err
 	}
-	if invocation.Status != effects.InvocationDispatched || invocation.InvocationVersion != commit.ExpectedInvocationVersion {
+	if invocation.InvocationVersion != update.ExpectedVersion || invocationTerminal(invocation.Status) {
 		return ports.ErrConflict
 	}
-	invocation.Status = effects.InvocationSucceeded
+	previousStatus := invocation.Status
+	invocation.Status = update.Status
 	invocation.InvocationVersion++
-	invocation.ExternalExecutionRef = commit.ExternalRef
-	invocation.ResultRef = commit.ResultRef
+	invocation.ExternalExecutionRef = update.ExternalReference
+	invocation.ResultRef = update.ResultRef
 	updated, err := marshal(invocation)
 	if err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE invocations SET status=?,invocation_version=?,body=?
 WHERE invocation_id=? AND status=? AND invocation_version=?`, invocation.Status, invocation.InvocationVersion,
-		updated, invocation.InvocationID, effects.InvocationDispatched, commit.ExpectedInvocationVersion)
+		updated, invocation.InvocationID, previousStatus, update.ExpectedVersion)
 	if err != nil {
 		return err
 	}
@@ -776,6 +785,15 @@ WHERE invocation_id=? AND status=? AND invocation_version=?`, invocation.Status,
 		return ports.ErrConflict
 	}
 	return nil
+}
+
+func invocationTerminal(status effects.InvocationStatus) bool {
+	switch status {
+	case effects.InvocationSucceeded, effects.InvocationFailed, effects.InvocationTimedOut, effects.InvocationCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func insertTimer(ctx context.Context, tx *sql.Tx, timer effects.Timer) error {

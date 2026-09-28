@@ -167,8 +167,13 @@ func (e *Engine) execute(
 	if attempt <= 0 {
 		attempt = 1
 	}
+	invocations, err := e.store.Invocations(ctx, load.Snapshot.RunID)
+	if err != nil {
+		return effects.StateOutcome{}, err
+	}
 	outcome, err := handler.OnState(ctx, ports.StateExecutionContext{
 		Definition: definition, Snapshot: load.Snapshot, Node: node, Attempt: attempt,
+		Invocations: invocations,
 	}, load.Signal)
 	if err != nil {
 		return effects.StateOutcome{}, err
@@ -251,6 +256,7 @@ func (e *Engine) buildCommit(
 		ExpectedStateVersion: before, FencingToken: load.FencingToken, Snapshot: snapshot,
 		SignalID: load.Signal.SignalID, Step: step, Effects: ledgerEntries,
 		Invocations: append([]effects.ToolInvocation(nil), outcome.ToolInvocations...),
+		InvocationUpdates: append([]effects.InvocationUpdate(nil), outcome.InvocationUpdates...),
 		Timers:      timers, Events: events,
 	}
 	for _, event := range events {

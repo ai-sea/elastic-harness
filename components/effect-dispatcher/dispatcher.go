@@ -145,7 +145,6 @@ func (d *Dispatcher) commitCompleted(ctx context.Context, entry effects.EffectLe
 	wakeup, _ := json.Marshal(map[string]string{"runId": entry.RunID, "dedupeKey": signal.DedupeKey})
 	return d.store.CommitEffectResult(ctx, ports.EffectResultCommit{
 		EffectID: entry.EffectID, ExpectedLedgerVersion: entry.LedgerVersion,
-		InvocationID: entry.InvocationID, ExpectedInvocationVersion: 2,
 		ExternalRef: externalRef, ResultRef: resultRef, Signal: signal,
 		Outbox: ports.OutboxRecord{
 			ID: "out_" + entry.EffectID, Channel: "state", Key: entry.RunID, Payload: wakeup, CreatedAt: now,
