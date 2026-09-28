@@ -106,7 +106,7 @@ func newApplication(options applicationOptions) (*application, error) {
 		options.provider = &demoProvider{}
 	}
 	llm := llmhandler.New(options.provider, tools, "standalone-demo")
-	tool := toolhandler.New(nil)
+	tool := toolhandler.New(tools, nil)
 	tokens := make([]string, 0, 2)
 	for _, registration := range []struct {
 		descriptor ports.HandlerDescriptor
@@ -126,7 +126,7 @@ func newApplication(options applicationOptions) (*application, error) {
 	stateQueue := seqembedded.New(1024)
 	chatQueue := ceqembedded.New(1024)
 	relay := projector.NewOutboxRelay(store, map[string]ports.Queue{"state": stateQueue, "chat": chatQueue})
-	httpTools := toolexecutorhttp.New(tools, nil)
+	httpTools := toolexecutorhttp.New(nil)
 	effectExecutor := toolexecutor.New(httpTools, artifacts)
 	effectDispatcher := dispatcher.New(store, effectExecutor, "standalone-dispatcher")
 	timerReconciler := reconciler.New(store, ids, nil)

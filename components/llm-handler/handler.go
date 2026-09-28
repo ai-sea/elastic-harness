@@ -35,8 +35,8 @@ func (h *Handler) OnState(ctx context.Context, execution ports.StateExecutionCon
 	if prompt == "" {
 		return effects.StateOutcome{}, errors.New("Run Context 缺少 prompt")
 	}
-	if toolResult, exists := runContext["toolResult"]; exists {
-		encoded, _ := json.Marshal(toolResult)
+	if toolResults, exists := runContext["toolResults"]; exists {
+		encoded, _ := json.Marshal(toolResults)
 		prompt = fmt.Sprintf("%s\n\ntoolResult: %s", prompt, encoded)
 	}
 	response, err := h.provider.Invoke(ctx, ports.ModelRequest{

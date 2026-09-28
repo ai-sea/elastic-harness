@@ -14,7 +14,7 @@ import (
 
 func TestEnteredSignalCreatesEffectIntentAndCallbackTimer(t *testing.T) {
 	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
-	handler := New(func() time.Time { return now })
+	handler := New(testCatalog{}, func() time.Time { return now })
 	outcome, err := handler.OnState(context.Background(), execution(nil), signal("harness/state.entered", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -24,6 +24,20 @@ func TestEnteredSignalCreatesEffectIntentAndCallbackTimer(t *testing.T) {
 	}
 	if len(outcome.Effects) != 1 || outcome.Effects[0].EffectID != "call-1" {
 		t.Fatalf("Effect 意图错误：%+v", outcome.Effects)
+	}
+	if len(outcome.ToolInvocations) != 1 {
+		t.Fatalf("必须同时落账一条 ToolInvocation：%+v", outcome.ToolInvocations)
+	}
+	invocation := outcome.ToolInvocations[0]
+	if invocation.RegistrationID != "registration-1" || invocation.RegistrationRevision != 7 {
+		t.Fatalf("ToolInvocation 必须固定注册修订号：%+v", invocation)
+	}
+	var intent effects.ToolEffectIntent
+	if err := json.Unmarshal(outcome.Effects[0].Intent, &intent); err != nil {
+		t.Fatal(err)
+	}
+	if intent.RegistrationID != invocation.RegistrationID || intent.RegistrationRevision != invocation.RegistrationRevision {
+		t.Fatalf("Effect 与 Invocation 的注册快照不一致：intent=%+v invocation=%+v", intent, invocation)
 	}
 	// 幂等键以 Run 为作用域，保证重投/恢复时同一调用可被对端去重（§11 幂等作用域）。
 	if outcome.Effects[0].IdempotencyKey != "run-1/call-1" {
@@ -40,7 +54,7 @@ func TestEnteredSignalCreatesEffectIntentAndCallbackTimer(t *testing.T) {
 // §11.1「回调丢失」：Callback 期限内未收到回执时，timer.fired 必须收敛为 timedOut，
 // 而不是带着同一 effectId 重新生成意图（那会把同一外部调用执行两次）。
 func TestTimerFiredConvergesToCallbackTimeout(t *testing.T) {
-	handler := New(nil)
+	handler := New(testCatalog{}, nil)
 	outcome, err := handler.OnState(context.Background(), execution(nil), signal("harness/timer.fired", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +76,7 @@ func TestTimerFiredConvergesToCallbackTimeout(t *testing.T) {
 }
 
 func TestEffectCompletedFoldsToolResult(t *testing.T) {
-	handler := New(nil)
+	handler := New(testCatalog{}, nil)
 	payload, _ := json.Marshal(map[string]any{"effectId": "call-1", "result": map[string]string{"echo": "你好"}})
 	outcome, err := handler.OnState(context.Background(), execution(nil), signal("harness/effect.completed", payload))
 	if err != nil {
@@ -78,13 +92,13 @@ func TestEffectCompletedFoldsToolResult(t *testing.T) {
 	if patch["pendingToolCalls"] != nil {
 		t.Fatal("完成后必须清掉 pendingToolCalls")
 	}
-	if _, exists := patch["toolResult"]; !exists {
+	if _, exists := patch["toolResults"]; !exists {
 		t.Fatalf("工具结果必须写回 Context 供下一轮模型使用：%v", patch)
 	}
 }
 
 func TestRejectsPureStateBinding(t *testing.T) {
-	handler := New(nil)
+	handler := New(testCatalog{}, nil)
 	node := domain.StateNode{SideEffect: domain.SideEffectPure}
 	exec := ports.StateExecutionContext{Snapshot: snapshot(json.RawMessage(`{"pendingToolCalls":[]}`)), Node: node}
 	if _, err := handler.OnState(context.Background(), exec, signal("harness/state.entered", nil)); err == nil {
@@ -93,7 +107,7 @@ func TestRejectsPureStateBinding(t *testing.T) {
 }
 
 func TestEnteredSignalWithoutPendingToolCallsFails(t *testing.T) {
-	handler := New(nil)
+	handler := New(testCatalog{}, nil)
 	for _, runContext := range []json.RawMessage{
 		json.RawMessage(`{}`),                      // 完全没有 pendingToolCalls 字段
 		json.RawMessage(`{"prompt":"你好"}`),         // 有其他字段但没有待调用列表
@@ -124,4 +138,13 @@ func signal(signalType string, payload json.RawMessage) effects.StateSignal {
 	return effects.StateSignal{
 		SignalID: "sig-1", RunID: "run-1", Type: qname.MustParse(signalType), Payload: payload,
 	}
+}
+
+type testCatalog struct{}
+
+func (testCatalog) ResolveTool(context.Context, string, qname.QName) (ports.ToolRegistration, error) {
+	return ports.ToolRegistration{
+		RegistrationID: "registration-1", Revision: 7,
+		Name: qname.MustParse("harness/echo"), Endpoint: "http://tool.example/echo",
+	}, nil
 }

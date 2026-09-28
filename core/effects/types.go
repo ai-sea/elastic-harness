@@ -50,15 +50,16 @@ type TimerIntent struct {
 }
 
 type StateOutcome struct {
-	Kind         OutcomeKind              `json:"kind"`
-	Result       string                   `json:"result,omitempty"`
-	ContextPatch json.RawMessage          `json:"contextPatch,omitempty"`
-	Events       []domain.EventEnvelope   `json:"events,omitempty"`
-	Effects      []EffectIntent           `json:"effects,omitempty"`
-	Timers       []TimerIntent            `json:"timers,omitempty"`
-	Usage        domain.Usage             `json:"usage"`
-	Invocations  []domain.InvocationTrace `json:"invocations,omitempty"`
-	ErrorCode    string                   `json:"errorCode,omitempty"`
+	Kind            OutcomeKind              `json:"kind"`
+	Result          string                   `json:"result,omitempty"`
+	ContextPatch    json.RawMessage          `json:"contextPatch,omitempty"`
+	Events          []domain.EventEnvelope   `json:"events,omitempty"`
+	Effects         []EffectIntent           `json:"effects,omitempty"`
+	ToolInvocations []ToolInvocation         `json:"toolInvocations,omitempty"`
+	Timers          []TimerIntent            `json:"timers,omitempty"`
+	Usage           domain.Usage             `json:"usage"`
+	Invocations     []domain.InvocationTrace `json:"invocations,omitempty"`
+	ErrorCode       string                   `json:"errorCode,omitempty"`
 }
 
 type EffectStatus string
@@ -73,6 +74,7 @@ const (
 
 type EffectLedgerEntry struct {
 	EffectID       string            `json:"effectId"`
+	InvocationID   string            `json:"invocationId,omitempty"`
 	TenantID       string            `json:"tenantId"`
 	RunID          string            `json:"runId"`
 	Kind           qname.QName       `json:"kind"`
@@ -138,4 +140,14 @@ type ToolInvocation struct {
 	ResultRef            string           `json:"resultRef,omitempty"`
 	HeartbeatDeadline    time.Time        `json:"heartbeatDeadline,omitempty"`
 	CallbackDeadline     time.Time        `json:"callbackDeadline,omitempty"`
+}
+
+// ToolEffectIntent 固定工具注册版本，派发阶段不得再次按 QName 解析最新注册。
+type ToolEffectIntent struct {
+	CallID               string          `json:"callId"`
+	Tool                 qname.QName     `json:"tool"`
+	Arguments            json.RawMessage `json:"arguments"`
+	RegistrationID       string          `json:"registrationId"`
+	RegistrationRevision int64           `json:"registrationRevision"`
+	Endpoint             string          `json:"endpoint"`
 }

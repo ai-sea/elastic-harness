@@ -42,10 +42,7 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 		}
 		externalRef, resultRef, executeErr := d.executor.Execute(ctx, claimed)
 		if executeErr == nil {
-			if err := d.store.CommitEffect(ctx, claimed.EffectID, claimed.LedgerVersion, externalRef, resultRef); err != nil {
-				return dispatched, err
-			}
-			if err := d.signalCompleted(ctx, claimed, resultRef); err != nil {
+			if err := d.commitCompleted(ctx, claimed, externalRef, resultRef); err != nil {
 				return dispatched, err
 			}
 			dispatched++
@@ -80,16 +77,13 @@ func (d *Dispatcher) resolveUncertainNonIdempotent(ctx context.Context, entry ef
 		}
 		return false, ErrUncertainEffect
 	}
-	if err := d.store.CommitEffect(ctx, entry.EffectID, entry.LedgerVersion, externalRef, resultRef); err != nil {
-		return false, err
-	}
-	if err := d.signalCompleted(ctx, entry, resultRef); err != nil {
+	if err := d.commitCompleted(ctx, entry, externalRef, resultRef); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func (d *Dispatcher) signalCompleted(ctx context.Context, entry effects.EffectLedgerEntry, resultRef string) error {
+func (d *Dispatcher) commitCompleted(ctx context.Context, entry effects.EffectLedgerEntry, externalRef, resultRef string) error {
 	now := time.Now().UTC()
 	payload, _ := json.Marshal(map[string]string{"effectId": entry.EffectID, "resultRef": resultRef})
 	signal := effects.StateSignal{
@@ -98,11 +92,12 @@ func (d *Dispatcher) signalCompleted(ctx context.Context, entry effects.EffectLe
 		Payload: payload, OccurredAt: now,
 	}
 	wakeup, _ := json.Marshal(map[string]string{"runId": entry.RunID, "dedupeKey": signal.DedupeKey})
-	_, err := d.store.PutSignal(ctx, signal, ports.OutboxRecord{
-		ID: "out_" + entry.EffectID, Channel: "state", Key: entry.RunID, Payload: wakeup, CreatedAt: now,
+	return d.store.CommitEffectResult(ctx, ports.EffectResultCommit{
+		EffectID: entry.EffectID, ExpectedLedgerVersion: entry.LedgerVersion,
+		InvocationID: entry.InvocationID, ExpectedInvocationVersion: 2,
+		ExternalRef: externalRef, ResultRef: resultRef, Signal: signal,
+		Outbox: ports.OutboxRecord{
+			ID: "out_" + entry.EffectID, Channel: "state", Key: entry.RunID, Payload: wakeup, CreatedAt: now,
+		},
 	})
-	if errors.Is(err, ports.ErrTerminal) {
-		return nil
-	}
-	return err
 }

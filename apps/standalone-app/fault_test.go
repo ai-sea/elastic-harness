@@ -342,7 +342,7 @@ func newFaultFixture(t *testing.T, store *kvsqlite.Store, def domain.HarnessDefi
 
 func newWaitingFixture(t *testing.T, callback time.Duration) *faultFixture {
 	t.Helper()
-	return newFaultFixture(t, openMemoryStore(t), waitToolDefinition(callback), toolhandler.New(nil))
+	return newFaultFixture(t, openMemoryStore(t), waitToolDefinition(callback), toolhandler.New(stubToolCatalog{}, nil))
 }
 
 func requiredCapabilities(def domain.HarnessDefinition) []qname.QName {
@@ -503,6 +503,15 @@ func succeedHandler() scriptedHandler {
 }
 
 type stubExecutor struct{}
+
+type stubToolCatalog struct{}
+
+func (stubToolCatalog) ResolveTool(context.Context, string, qname.QName) (ports.ToolRegistration, error) {
+	return ports.ToolRegistration{
+		RegistrationID: "tool-registration-1", Revision: 1,
+		Name: qname.MustParse("harness/echo"), Endpoint: "http://tool.invalid",
+	}, nil
+}
 
 func (stubExecutor) Execute(context.Context, effects.EffectLedgerEntry) (string, string, error) {
 	return "ext-1", "artifact://result", nil

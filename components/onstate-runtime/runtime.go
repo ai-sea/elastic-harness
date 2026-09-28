@@ -95,7 +95,7 @@ func (e *Engine) CreateRun(ctx context.Context, request CreateRunRequest) (domai
 	snapshot := domain.RunSnapshot{
 		TenantID: request.TenantID, ChatID: request.ChatID, RunID: request.RunID,
 		LifecycleStatus: domain.LifecycleRunnable, CurrentState: definition.Initial,
-		StateVersion: 1, StateEnterCounter: 1, Harness: request.Harness,
+		StateVersion: 1, StateEnterCounter: 1, StateAttempt: 1, Harness: request.Harness,
 		ExecutionProfile: request.Profile, ResolvedBindings: bindings,
 		PendingCount: 1, Context: cloneJSON(request.InitialContext), Budget: request.Budget, UpdatedAt: now,
 	}
@@ -163,8 +163,12 @@ func (e *Engine) execute(
 	if err != nil {
 		return effects.StateOutcome{}, err
 	}
+	attempt := load.Snapshot.StateAttempt
+	if attempt <= 0 {
+		attempt = 1
+	}
 	outcome, err := handler.OnState(ctx, ports.StateExecutionContext{
-		Definition: definition, Snapshot: load.Snapshot, Node: node, Attempt: 1,
+		Definition: definition, Snapshot: load.Snapshot, Node: node, Attempt: attempt,
 	}, load.Signal)
 	if err != nil {
 		return effects.StateOutcome{}, err
@@ -208,11 +212,26 @@ func (e *Engine) buildCommit(
 	}
 	snapshot.Context = patched
 
-	if err := applyTransition(&snapshot, definition, outcome); err != nil {
-		return ports.TransitionCommit{}, err
+	attempt := load.Snapshot.StateAttempt
+	if attempt <= 0 {
+		attempt = 1
+	}
+	retrying := outcome.Kind == effects.OutcomeRetryableFailure && attempt < maxAttempts(node.Retry)
+	if retrying {
+		snapshot.LifecycleStatus = domain.LifecycleWaiting
+		snapshot.StateAttempt = attempt + 1
+		outcome.Timers = append(outcome.Timers, effects.TimerIntent{
+			Kind: "retry", DueAt: finishedAt.Add(retryDelay(node.Retry, attempt)),
+			SignalType: qname.MustParse("harness/internal.retry"),
+		})
+	} else {
+		if err := applyTransition(&snapshot, definition, outcome); err != nil {
+			return ports.TransitionCommit{}, err
+		}
 	}
 	if snapshot.CurrentState != load.Snapshot.CurrentState {
 		snapshot.StateEnterCounter++
+		snapshot.StateAttempt = 1
 	}
 
 	ledgerEntries := e.ledgerEntries(snapshot, node, outcome.Effects, finishedAt)
@@ -221,7 +240,7 @@ func (e *Engine) buildCommit(
 	snapshot.LastAcceptedSequence += int64(len(events))
 
 	step := domain.Step{
-		RunID: snapshot.RunID, StepSeq: snapshot.StateVersion, Attempt: 1,
+		RunID: snapshot.RunID, StepSeq: snapshot.StateVersion, Attempt: attempt,
 		State: load.Snapshot.CurrentState, Handler: binding, SignalIDs: []string{load.Signal.SignalID},
 		StartedAt: startedAt, FinishedAt: finishedAt, Outcome: string(outcome.Kind),
 		StateVersionBefore: before, StateVersionAfter: snapshot.StateVersion,
@@ -230,7 +249,9 @@ func (e *Engine) buildCommit(
 
 	commit := ports.TransitionCommit{
 		ExpectedStateVersion: before, FencingToken: load.FencingToken, Snapshot: snapshot,
-		SignalID: load.Signal.SignalID, Step: step, Effects: ledgerEntries, Timers: timers, Events: events,
+		SignalID: load.Signal.SignalID, Step: step, Effects: ledgerEntries,
+		Invocations: append([]effects.ToolInvocation(nil), outcome.ToolInvocations...),
+		Timers:      timers, Events: events,
 	}
 	for _, event := range events {
 		commit.Outbox = append(commit.Outbox, e.chatEventOutbox(snapshot.RunID, event, finishedAt))
@@ -313,7 +334,8 @@ func (e *Engine) ledgerEntries(snapshot domain.RunSnapshot, node domain.StateNod
 	entries := make([]effects.EffectLedgerEntry, 0, len(intents))
 	for _, intent := range intents {
 		entry := effects.EffectLedgerEntry{
-			EffectID: intent.EffectID, TenantID: snapshot.TenantID, RunID: snapshot.RunID, Kind: intent.Kind,
+			EffectID: intent.EffectID, InvocationID: intent.EffectID,
+			TenantID: snapshot.TenantID, RunID: snapshot.RunID, Kind: intent.Kind,
 			Status: effects.EffectPending, LedgerVersion: 1,
 			Intent: cloneJSON(intent.Intent), IntentRef: intent.IntentRef,
 			IdempotencyKey: intent.IdempotencyKey, SideEffect: node.SideEffect,
@@ -431,3 +453,27 @@ func cloneJSON(value json.RawMessage) json.RawMessage {
 }
 
 func timePointer(value time.Time) *time.Time { return &value }
+
+func maxAttempts(policy domain.RetryPolicy) int {
+	if policy.MaxAttempts <= 0 {
+		return 1
+	}
+	return policy.MaxAttempts
+}
+
+func retryDelay(policy domain.RetryPolicy, attempt int) time.Duration {
+	delay := policy.InitialBackoff
+	if delay <= 0 {
+		delay = 100 * time.Millisecond
+	}
+	for current := 1; current < attempt; current++ {
+		if policy.MaxBackoff > 0 && delay >= policy.MaxBackoff/2 {
+			return policy.MaxBackoff
+		}
+		delay *= 2
+	}
+	if policy.MaxBackoff > 0 && delay > policy.MaxBackoff {
+		return policy.MaxBackoff
+	}
+	return delay
+}

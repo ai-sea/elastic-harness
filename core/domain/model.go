@@ -91,6 +91,7 @@ type RunSnapshot struct {
 	ActiveHandler        *HandlerBinding           `json:"activeHandler,omitempty"`
 	LastAcceptedSequence int64                     `json:"lastAcceptedSequence"`
 	StateEnterCounter    int64                     `json:"stateEnterCounter"`
+	StateAttempt         int                       `json:"stateAttempt"`
 	PendingCount         int64                     `json:"pendingCount"`
 	OldestPendingAt      *time.Time                `json:"oldestPendingAt,omitempty"`
 	CheckpointRef        string                    `json:"checkpointRef,omitempty"`

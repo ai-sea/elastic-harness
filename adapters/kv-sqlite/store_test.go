@@ -68,11 +68,17 @@ func TestInboxDeduplicatesAndEffectCASIsIndependent(t *testing.T) {
 	}
 	commit := transitionFrom(load, now)
 	effect := effects.EffectLedgerEntry{
-		EffectID: "effect-1", RunID: "run-1", Kind: qname.MustParse("harness/tool.invoke"),
+		EffectID: "effect-1", InvocationID: "invocation-1", RunID: "run-1", Kind: qname.MustParse("harness/tool.invoke"),
 		Status: effects.EffectPending, LedgerVersion: 1, IdempotencyKey: "run-1/effect-1",
 		SideEffect: domain.SideEffectIdempotent, Deadline: now.Add(time.Minute), CreatedAt: now,
 	}
 	commit.Effects = []effects.EffectLedgerEntry{effect}
+	commit.Invocations = []effects.ToolInvocation{{
+		InvocationID: "invocation-1", TenantID: "tenant-1", RunID: "run-1",
+		ToolID: qname.MustParse("harness/echo"), RegistrationID: "registration-1", RegistrationRevision: 7,
+		Status: effects.InvocationPending, InvocationVersion: 1, Attempt: 1,
+		IdempotencyKey: "run-1/effect-1", CallbackDeadline: now.Add(time.Minute),
+	}}
 	if err := store.CommitTransition(context.Background(), commit); err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +89,45 @@ func TestInboxDeduplicatesAndEffectCASIsIndependent(t *testing.T) {
 	if claimed.Status != effects.EffectDispatched || claimed.LedgerVersion != 2 {
 		t.Fatalf("派发权状态错误：%+v", claimed)
 	}
+	invocations, err := store.Invocations(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 1 || invocations[0].Status != effects.InvocationDispatched || invocations[0].RegistrationRevision != 7 {
+		t.Fatalf("领取 Effect 时必须以独立 CAS 同步推进固定修订的 Invocation：%+v", invocations)
+	}
 	if _, err := store.ClaimEffect(context.Background(), effect.EffectID, 1, "dispatcher-b"); !errors.Is(err, ports.ErrConflict) {
 		t.Fatalf("第二个 Dispatcher 不得取得派发权：%v", err)
 	}
-	if err := store.CommitEffect(context.Background(), effect.EffectID, 2, "external-1", "artifact://result"); err != nil {
+	completedSignal := testSignal("effect-completed", effect.EffectID+"/completed", now)
+	if err := store.CommitEffectResult(context.Background(), ports.EffectResultCommit{
+		EffectID: effect.EffectID, ExpectedLedgerVersion: 2,
+		InvocationID: "invocation-1", ExpectedInvocationVersion: 2,
+		ExternalRef: "external-1", ResultRef: "artifact://result",
+		Signal: completedSignal, Outbox: testOutbox("effect-completed-outbox", "run-1", completedSignal),
+	}); err != nil {
 		t.Fatal(err)
+	}
+	invocations, err = store.Invocations(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocations[0].Status != effects.InvocationSucceeded || invocations[0].InvocationVersion != 3 {
+		t.Fatalf("Effect 完成必须在同一事务收敛 Invocation：%+v", invocations[0])
+	}
+	inbox, err := store.Inbox(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundCompletion := false
+	for _, candidate := range inbox {
+		if candidate.SignalID == completedSignal.SignalID {
+			foundCompletion = true
+			break
+		}
+	}
+	if !foundCompletion {
+		t.Fatalf("Effect、Invocation 与完成 Signal 必须原子提交：%+v", inbox)
 	}
 }
 

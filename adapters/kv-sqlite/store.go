@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS effects (
   ledger_version INTEGER NOT NULL, deadline TEXT NOT NULL, body BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS effects_pending ON effects(status, deadline);
+CREATE TABLE IF NOT EXISTS invocations (
+  invocation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL,
+  invocation_version INTEGER NOT NULL, body BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS invocations_run ON invocations(run_id, status);
 CREATE TABLE IF NOT EXISTS timers (
   timer_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL,
   due_at TEXT NOT NULL, entered_at_counter INTEGER NOT NULL, body BLOB NOT NULL
@@ -244,6 +249,11 @@ WHERE signal_id=? AND run_id=? AND consumed_step IS NULL`, commit.Step.StepSeq, 
 				return err
 			}
 		}
+		for _, invocation := range commit.Invocations {
+			if err := insertInvocation(ctx, tx, invocation); err != nil {
+				return err
+			}
+		}
 		for _, timer := range commit.Timers {
 			if err := insertTimer(ctx, tx, timer); err != nil {
 				return err
@@ -291,6 +301,11 @@ func (s *Store) Effects(ctx context.Context, runID string) ([]effects.EffectLedg
 		`SELECT body FROM effects WHERE run_id=? ORDER BY effect_id`, runID)
 }
 
+func (s *Store) Invocations(ctx context.Context, runID string) ([]effects.ToolInvocation, error) {
+	return queryJSON[effects.ToolInvocation](ctx, s.database,
+		`SELECT body FROM invocations WHERE run_id=? ORDER BY invocation_id`, runID)
+}
+
 func (s *Store) PendingEffects(ctx context.Context, limit int) ([]effects.EffectLedgerEntry, error) {
 	if limit <= 0 {
 		limit = 100
@@ -330,22 +345,74 @@ WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.Ledger
 		if count != 1 {
 			return ports.ErrConflict
 		}
+		if entry.InvocationID != "" {
+			if err := transitionInvocation(ctx, tx, entry.InvocationID, effects.InvocationPending, effects.InvocationDispatched, "", ""); err != nil {
+				return err
+			}
+		}
 		claimed = entry
 		return nil
 	})
 	return claimed, err
 }
 
-func (s *Store) CommitEffect(ctx context.Context, effectID string, ledgerVersion int64, externalRef, resultRef string) error {
-	return s.updateEffect(ctx, effectID, ledgerVersion, func(entry *effects.EffectLedgerEntry) error {
-		if entry.Status != effects.EffectDispatched {
+func (s *Store) CommitEffectResult(ctx context.Context, commit ports.EffectResultCommit) error {
+	return s.inTransaction(ctx, func(tx *sql.Tx) error {
+		var effectBody []byte
+		if err := tx.QueryRowContext(ctx, `SELECT body FROM effects WHERE effect_id=?`, commit.EffectID).Scan(&effectBody); err != nil {
+			return mapReadError(err)
+		}
+		entry, err := unmarshal[effects.EffectLedgerEntry](effectBody)
+		if err != nil {
+			return err
+		}
+		if entry.Status != effects.EffectDispatched || entry.LedgerVersion != commit.ExpectedLedgerVersion {
 			return ports.ErrConflict
 		}
 		now := s.now()
 		entry.Status = effects.EffectCommitted
-		entry.ExternalRef = externalRef
-		entry.ResultRef = resultRef
+		entry.LedgerVersion++
+		entry.ExternalRef = commit.ExternalRef
+		entry.ResultRef = commit.ResultRef
 		entry.ResolvedAt = &now
+		updatedEffect, err := marshal(entry)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE effects SET status=?,ledger_version=?,body=?
+WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.LedgerVersion, updatedEffect,
+			commit.EffectID, effects.EffectDispatched, commit.ExpectedLedgerVersion)
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count != 1 {
+			return ports.ErrConflict
+		}
+		if commit.InvocationID != "" {
+			if err := completeInvocation(ctx, tx, commit); err != nil {
+				return err
+			}
+		}
+		var lifecycle domain.LifecycleStatus
+		if err := tx.QueryRowContext(ctx, `SELECT lifecycle FROM runs WHERE run_id=?`, commit.Signal.RunID).Scan(&lifecycle); err != nil {
+			return mapReadError(err)
+		}
+		if lifecycle == domain.LifecycleTerminal {
+			return nil
+		}
+		inserted, err := insertSignalIgnoreDuplicate(ctx, tx, commit.Signal)
+		if err != nil {
+			return err
+		}
+		if inserted {
+			if err := adjustPendingCount(ctx, tx, commit.Signal.RunID, 1, commit.Signal.OccurredAt); err != nil {
+				return err
+			}
+			if err := insertOutbox(ctx, tx, []ports.OutboxRecord{commit.Outbox}); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 }
@@ -574,6 +641,93 @@ func insertEffect(ctx context.Context, tx *sql.Tx, entry effects.EffectLedgerEnt
 VALUES(?,?,?,?,?,?)`, entry.EffectID, entry.RunID, entry.Status, entry.LedgerVersion,
 		formatTime(entry.Deadline), body)
 	return mapWriteError(err)
+}
+
+func insertInvocation(ctx context.Context, tx *sql.Tx, invocation effects.ToolInvocation) error {
+	body, err := marshal(invocation)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO invocations(invocation_id,run_id,status,invocation_version,body)
+VALUES(?,?,?,?,?)`, invocation.InvocationID, invocation.RunID, invocation.Status, invocation.InvocationVersion, body)
+	return mapWriteError(err)
+}
+
+func transitionInvocation(
+	ctx context.Context,
+	tx *sql.Tx,
+	invocationID string,
+	from, to effects.InvocationStatus,
+	externalRef, resultRef string,
+) error {
+	var body []byte
+	if err := tx.QueryRowContext(ctx, `SELECT body FROM invocations WHERE invocation_id=?`, invocationID).Scan(&body); err != nil {
+		return mapReadError(err)
+	}
+	invocation, err := unmarshal[effects.ToolInvocation](body)
+	if err != nil {
+		return err
+	}
+	if invocation.Status != from {
+		return ports.ErrConflict
+	}
+	expectedVersion := invocation.InvocationVersion
+	invocation.Status = to
+	invocation.InvocationVersion++
+	if externalRef != "" {
+		invocation.ExternalExecutionRef = externalRef
+	}
+	if resultRef != "" {
+		invocation.ResultRef = resultRef
+	}
+	updated, err := marshal(invocation)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE invocations SET status=?,invocation_version=?,body=?
+WHERE invocation_id=? AND status=? AND invocation_version=?`, invocation.Status, invocation.InvocationVersion,
+		updated, invocationID, from, expectedVersion)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return ports.ErrConflict
+	}
+	return nil
+}
+
+func completeInvocation(ctx context.Context, tx *sql.Tx, commit ports.EffectResultCommit) error {
+	var body []byte
+	if err := tx.QueryRowContext(ctx, `SELECT body FROM invocations WHERE invocation_id=?`, commit.InvocationID).Scan(&body); err != nil {
+		return mapReadError(err)
+	}
+	invocation, err := unmarshal[effects.ToolInvocation](body)
+	if err != nil {
+		return err
+	}
+	if invocation.Status != effects.InvocationDispatched || invocation.InvocationVersion != commit.ExpectedInvocationVersion {
+		return ports.ErrConflict
+	}
+	invocation.Status = effects.InvocationSucceeded
+	invocation.InvocationVersion++
+	invocation.ExternalExecutionRef = commit.ExternalRef
+	invocation.ResultRef = commit.ResultRef
+	updated, err := marshal(invocation)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE invocations SET status=?,invocation_version=?,body=?
+WHERE invocation_id=? AND status=? AND invocation_version=?`, invocation.Status, invocation.InvocationVersion,
+		updated, invocation.InvocationID, effects.InvocationDispatched, commit.ExpectedInvocationVersion)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return ports.ErrConflict
+	}
+	return nil
 }
 
 func insertTimer(ctx context.Context, tx *sql.Tx, timer effects.Timer) error {

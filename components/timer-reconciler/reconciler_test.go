@@ -149,14 +149,17 @@ func (s *fakeStore) Inbox(context.Context, string) ([]effects.StateSignal, error
 func (s *fakeStore) Effects(context.Context, string) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
+func (s *fakeStore) Invocations(context.Context, string) ([]effects.ToolInvocation, error) {
+	return nil, nil
+}
 func (s *fakeStore) PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
 func (s *fakeStore) ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error) {
 	return effects.EffectLedgerEntry{}, nil
 }
-func (s *fakeStore) CommitEffect(context.Context, string, int64, string, string) error { return nil }
-func (s *fakeStore) MarkEffectManual(context.Context, string, int64) error             { return nil }
+func (s *fakeStore) CommitEffectResult(context.Context, ports.EffectResultCommit) error { return nil }
+func (s *fakeStore) MarkEffectManual(context.Context, string, int64) error              { return nil }
 func (s *fakeStore) PendingOutbox(context.Context, int) ([]ports.OutboxRecord, error) {
 	return nil, nil
 }

@@ -75,6 +75,7 @@ type TransitionCommit struct {
 	SignalID             string
 	Step                 domain.Step
 	Effects              []effects.EffectLedgerEntry
+	Invocations          []effects.ToolInvocation
 	Timers               []effects.Timer
 	Events               []domain.EventEnvelope
 	Outbox               []OutboxRecord
@@ -103,9 +104,10 @@ type StateStore interface {
 	Events(context.Context, string, int64, int) ([]domain.EventEnvelope, error)
 	Inbox(context.Context, string) ([]effects.StateSignal, error)
 	Effects(context.Context, string) ([]effects.EffectLedgerEntry, error)
+	Invocations(context.Context, string) ([]effects.ToolInvocation, error)
 	PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error)
 	ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error)
-	CommitEffect(context.Context, string, int64, string, string) error
+	CommitEffectResult(context.Context, EffectResultCommit) error
 	MarkEffectManual(context.Context, string, int64) error
 	DueTimers(context.Context, time.Time, int) ([]effects.Timer, error)
 	FireTimer(context.Context, string, int64, effects.StateSignal, OutboxRecord) (bool, error)
@@ -119,6 +121,17 @@ type StateStore interface {
 	// EnqueueHint 只写入一条 Outbox 唤醒提示，不触碰任何业务状态。
 	// Reconciler 用它为停滞 Run 补发提示；最终迁移仍由 onState 经 CAS 提交。
 	EnqueueHint(context.Context, OutboxRecord) error
+}
+
+type EffectResultCommit struct {
+	EffectID                  string
+	ExpectedLedgerVersion     int64
+	InvocationID              string
+	ExpectedInvocationVersion int64
+	ExternalRef               string
+	ResultRef                 string
+	Signal                    effects.StateSignal
+	Outbox                    OutboxRecord
 }
 
 type Queue interface {
@@ -169,11 +182,14 @@ type ModelProvider interface {
 }
 
 type ToolRequest struct {
-	EffectID       string
-	IdempotencyKey string
-	TenantID       string
-	Tool           qname.QName
-	Input          json.RawMessage
+	EffectID             string
+	IdempotencyKey       string
+	TenantID             string
+	RegistrationID       string
+	RegistrationRevision int64
+	Endpoint             string
+	Tool                 qname.QName
+	Input                json.RawMessage
 }
 
 type ToolResult struct {

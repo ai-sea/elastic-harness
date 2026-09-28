@@ -85,6 +85,50 @@ func TestTerminalStateCannotBeRevived(t *testing.T) {
 	}
 }
 
+func TestRetryableFailureSchedulesRetryFromPolicy(t *testing.T) {
+	fixture := newFixture(t, effects.StateOutcome{Kind: effects.OutcomeRetryableFailure, ErrorCode: "temporary"})
+	node := fixture.definition.States["model"]
+	node.Retry = domain.RetryPolicy{MaxAttempts: 3, InitialBackoff: 2 * time.Second}
+	fixture.definition.States["model"] = node
+	fixture.engine.definitions = staticDefinitions{value: fixture.definition}
+
+	if err := fixture.engine.ProcessRun(context.Background(), "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	commit := fixture.store.commit
+	if commit.Snapshot.LifecycleStatus != domain.LifecycleWaiting || commit.Snapshot.StateAttempt != 2 {
+		t.Fatalf("可重试失败必须留在原状态并增加尝试次数：%+v", commit.Snapshot)
+	}
+	if len(commit.Timers) != 1 || commit.Timers[0].Kind != "retry" {
+		t.Fatalf("可重试失败必须按策略落账 Timer：%+v", commit.Timers)
+	}
+	wantDue := fixture.store.load.Snapshot.UpdatedAt.Add(2 * time.Second)
+	if !commit.Timers[0].DueAt.Equal(wantDue) {
+		t.Fatalf("首次重试时间 = %s，期望 %s", commit.Timers[0].DueAt, wantDue)
+	}
+}
+
+func TestRetryableFailureExhaustionUsesFailureTransition(t *testing.T) {
+	fixture := newFixture(t, effects.StateOutcome{Kind: effects.OutcomeRetryableFailure, ErrorCode: "temporary"})
+	node := fixture.definition.States["model"]
+	node.Retry = domain.RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Second}
+	node.Transitions["failed"] = "done"
+	fixture.definition.States["model"] = node
+	fixture.engine.definitions = staticDefinitions{value: fixture.definition}
+	fixture.store.load.Snapshot.StateAttempt = 2
+
+	if err := fixture.engine.ProcessRun(context.Background(), "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	commit := fixture.store.commit
+	if commit.Snapshot.LifecycleStatus != domain.LifecycleTerminal || commit.Snapshot.StateAttempt != 1 {
+		t.Fatalf("重试耗尽后必须按失败迁移收敛：%+v", commit.Snapshot)
+	}
+	if len(commit.Timers) != 0 {
+		t.Fatalf("重试耗尽后不得继续创建 Timer：%+v", commit.Timers)
+	}
+}
+
 type fixture struct {
 	engine     *Engine
 	store      *recordingStore
@@ -203,13 +247,16 @@ func (s *recordingStore) Inbox(context.Context, string) ([]effects.StateSignal, 
 func (s *recordingStore) Effects(context.Context, string) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
+func (s *recordingStore) Invocations(context.Context, string) ([]effects.ToolInvocation, error) {
+	return nil, nil
+}
 func (s *recordingStore) PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
 func (s *recordingStore) ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error) {
 	return effects.EffectLedgerEntry{}, nil
 }
-func (s *recordingStore) CommitEffect(context.Context, string, int64, string, string) error {
+func (s *recordingStore) CommitEffectResult(context.Context, ports.EffectResultCommit) error {
 	return nil
 }
 func (s *recordingStore) MarkEffectManual(context.Context, string, int64) error { return nil }

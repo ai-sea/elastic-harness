@@ -201,17 +201,23 @@ func (s *fakeStore) ClaimEffect(_ context.Context, effectID string, ledgerVersio
 	return entry, nil
 }
 
-func (s *fakeStore) CommitEffect(_ context.Context, effectID string, ledgerVersion int64, externalRef, resultRef string) error {
+func (s *fakeStore) CommitEffectResult(_ context.Context, commit ports.EffectResultCommit) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	entry, exists := s.entries[effectID]
-	if !exists || entry.LedgerVersion != ledgerVersion {
+	entry, exists := s.entries[commit.EffectID]
+	if !exists || entry.LedgerVersion != commit.ExpectedLedgerVersion {
 		return ports.ErrConflict
 	}
-	entry.Status, entry.LedgerVersion = effects.EffectCommitted, ledgerVersion+1
-	entry.ExternalRef, entry.ResultRef = externalRef, resultRef
-	s.entries[effectID] = entry
+	entry.Status, entry.LedgerVersion = effects.EffectCommitted, commit.ExpectedLedgerVersion+1
+	entry.ExternalRef, entry.ResultRef = commit.ExternalRef, commit.ResultRef
+	s.entries[commit.EffectID] = entry
 	s.trace = append(s.trace, "committed")
+	if !errors.Is(s.signalErr, ports.ErrTerminal) {
+		if s.signalErr != nil {
+			return s.signalErr
+		}
+		s.trace = append(s.trace, "signaled")
+	}
 	return nil
 }
 
@@ -263,6 +269,9 @@ func (s *fakeStore) Events(context.Context, string, int64, int) ([]domain.EventE
 }
 func (s *fakeStore) Inbox(context.Context, string) ([]effects.StateSignal, error) { return nil, nil }
 func (s *fakeStore) Effects(context.Context, string) ([]effects.EffectLedgerEntry, error) {
+	return nil, nil
+}
+func (s *fakeStore) Invocations(context.Context, string) ([]effects.ToolInvocation, error) {
 	return nil, nil
 }
 func (s *fakeStore) DueTimers(context.Context, time.Time, int) ([]effects.Timer, error) {

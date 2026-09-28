@@ -23,13 +23,15 @@ func (e *Executor) Execute(ctx context.Context, entry effects.EffectLedgerEntry)
 	if entry.Kind.String() != "harness/tool.invoke" {
 		return "", "", errors.New("不支持的 Effect kind")
 	}
-	var call ports.ToolCall
-	if err := json.Unmarshal(entry.Intent, &call); err != nil {
+	var intent effects.ToolEffectIntent
+	if err := json.Unmarshal(entry.Intent, &intent); err != nil {
 		return "", "", err
 	}
 	result, err := e.tools.Invoke(ctx, ports.ToolRequest{
 		EffectID: entry.EffectID, IdempotencyKey: entry.IdempotencyKey,
-		TenantID: entry.TenantID, Tool: call.Tool, Input: call.Arguments,
+		TenantID: entry.TenantID, Tool: intent.Tool, Input: intent.Arguments,
+		RegistrationID: intent.RegistrationID, RegistrationRevision: intent.RegistrationRevision,
+		Endpoint: intent.Endpoint,
 	})
 	if err != nil {
 		return "", "", err
