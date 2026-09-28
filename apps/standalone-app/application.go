@@ -40,6 +40,7 @@ type application struct {
 	wait     sync.WaitGroup
 	registry *registry.Registry
 	tokens   []string
+	views    *projector.MemorySink
 }
 
 type applicationOptions struct {
@@ -83,7 +84,7 @@ func newApplication(options applicationOptions) (*application, error) {
 	profiles := executionprofile.New(artifacts)
 	profile, err := profiles.Publish(context.Background(), "system", domain.ExecutionProfile{
 		ID: "standalone-default", Revision: 1, AllowedNamespaces: []string{"harness"},
-		Budget: domain.Budget{MaxSteps: 32, MaxTokens: 100000, MaxCostMicros: 1000000, Deadline: time.Now().UTC().Add(time.Hour)},
+		Budget: domain.Budget{MaxSteps: 32, MaxTokens: 100000, MaxCostMicros: 1000000},
 	})
 	if err != nil {
 		return nil, err
@@ -126,20 +127,22 @@ func newApplication(options applicationOptions) (*application, error) {
 	stateQueue := seqembedded.New(1024)
 	chatQueue := ceqembedded.New(1024)
 	relay := projector.NewOutboxRelay(store, map[string]ports.Queue{"state": stateQueue, "chat": chatQueue})
+	views := projector.NewMemorySink()
+	chatProjection := projector.NewProjection(store, views)
 	httpTools := toolexecutorhttp.New(nil)
 	effectExecutor := toolexecutor.New(httpTools, artifacts)
 	effectDispatcher := dispatcher.New(store, effectExecutor, "standalone-dispatcher")
 	timerReconciler := reconciler.New(store, ids, nil)
 	apiServer := api.New(store, engine, ids, api.Defaults{
 		Harness: domain.HarnessRef{ID: definitionValue.ID, Version: definitionValue.Version},
-		Profile: profile, Budget: domain.Budget{MaxSteps: 32, MaxTokens: 100000, MaxCostMicros: 1000000, Deadline: time.Now().UTC().Add(time.Hour)},
+		Profile: profile, Budget: domain.Budget{MaxSteps: 32, MaxTokens: 100000, MaxCostMicros: 1000000}, RunTTL: time.Hour,
 	}, nil)
 	root := http.NewServeMux()
 	root.HandleFunc("POST /internal/tools/echo", echoTool)
 	root.Handle("/", apiServer.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
-	app := &application{store: store, handler: root, cancel: cancel, registry: handlerRegistry, tokens: tokens}
-	app.start(ctx, engine, stateQueue, relay, effectDispatcher, timerReconciler, options.logger)
+	app := &application{store: store, handler: root, cancel: cancel, registry: handlerRegistry, tokens: tokens, views: views}
+	app.start(ctx, engine, stateQueue, chatQueue, chatProjection, relay, effectDispatcher, timerReconciler, options.logger)
 	failed = false
 	return app, nil
 }
@@ -156,6 +159,8 @@ func (a *application) start(
 	ctx context.Context,
 	engine *runtime.Engine,
 	stateQueue ports.Queue,
+	chatQueue ports.Queue,
+	chatProjection *projector.Projection,
 	relay *projector.OutboxRelay,
 	effectDispatcher *dispatcher.Dispatcher,
 	timerReconciler *reconciler.Reconciler,
@@ -164,7 +169,8 @@ func (a *application) start(
 	if logger == nil {
 		logger = log.Default()
 	}
-	messages, _ := stateQueue.Subscribe(ctx)
+	stateMessages, _ := stateQueue.Subscribe(ctx)
+	chatMessages, _ := chatQueue.Subscribe(ctx)
 	a.runLoop(ctx, 10*time.Millisecond, func() error {
 		_, err := relay.RelayOnce(ctx, 100)
 		return err
@@ -176,7 +182,7 @@ func (a *application) start(
 			select {
 			case <-ctx.Done():
 				return
-			case message := <-messages:
+			case message := <-stateMessages:
 				var wakeup struct {
 					RunID string `json:"runId"`
 				}
@@ -186,6 +192,20 @@ func (a *application) start(
 				}
 				if err := engine.ProcessRun(ctx, wakeup.RunID, "standalone-worker"); err != nil && !errors.Is(err, ports.ErrConflict) && !errors.Is(err, ports.ErrNotFound) {
 					logger.Printf("处理 Run %s 失败：%v", wakeup.RunID, err)
+				}
+			}
+		}
+	}()
+	a.wait.Add(1)
+	go func() {
+		defer a.wait.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case message := <-chatMessages:
+				if _, err := chatProjection.ApplyMessage(ctx, message); err != nil {
+					logger.Printf("投影 Chat 事件失败：%v", err)
 				}
 			}
 		}

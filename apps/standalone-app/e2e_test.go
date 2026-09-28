@@ -40,6 +40,9 @@ func TestAgentLoopEndToEnd(t *testing.T) {
 	run := postJSON[domain.RunSnapshot](t, server.URL+"/v1/chats/"+chat.ChatID+"/runs", map[string]string{
 		"tenantId": "tenant-e2e", "prompt": "请调用 echo 工具",
 	})
+	if run.Budget.Deadline.Before(time.Now().Add(50 * time.Minute)) {
+		t.Fatalf("Run 截止时间必须按创建时刻计算：%s", run.Budget.Deadline)
+	}
 	run = awaitTerminal(t, server.URL, run.RunID)
 	if run.TerminalReason == nil || *run.TerminalReason != domain.TerminalCompleted {
 		t.Fatalf("Run 未成功完成：%+v", run)
@@ -69,6 +72,16 @@ func TestAgentLoopEndToEnd(t *testing.T) {
 	if !strings.Contains(string(body), "event: harness/message.completed") {
 		t.Fatalf("SSE 缺少最终消息事件：%s", body)
 	}
+	viewDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(viewDeadline) {
+		view, exists := app.views.View("tenant-e2e", chat.ChatID)
+		if exists && len(view.Messages) == 1 && view.Messages[0].Content == "工具调用已完成。" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	view, _ := app.views.View("tenant-e2e", chat.ChatID)
+	t.Fatalf("ChatEventQueue 未被消费到投影视图：%+v", view)
 }
 
 func awaitTerminal(t *testing.T, baseURL, runID string) domain.RunSnapshot {

@@ -24,6 +24,7 @@ type Defaults struct {
 	Harness domain.HarnessRef
 	Profile domain.ProfileRef
 	Budget  domain.Budget
+	RunTTL  time.Duration
 }
 
 type Server struct {
@@ -117,15 +118,24 @@ func (s *Server) createRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	initialContext, _ := json.Marshal(map[string]string{"prompt": input.Prompt})
+	budget := s.budgetForRun()
 	run, err := s.engine.CreateRun(request.Context(), runtime.CreateRunRequest{
 		TenantID: input.TenantID, ChatID: request.PathValue("chatId"), Harness: s.defaults.Harness,
-		Profile: s.defaults.Profile, Budget: s.defaults.Budget, InitialContext: initialContext,
+		Profile: s.defaults.Profile, Budget: budget, InitialContext: initialContext,
 	})
 	if err != nil {
 		writeStoreError(response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, run)
+}
+
+func (s *Server) budgetForRun() domain.Budget {
+	budget := s.defaults.Budget
+	if s.defaults.RunTTL > 0 {
+		budget.Deadline = s.now().Add(s.defaults.RunTTL)
+	}
+	return budget
 }
 
 func (s *Server) cancelRun(response http.ResponseWriter, request *http.Request) {
