@@ -253,7 +253,13 @@ func (s *recordingStore) Invocations(context.Context, string) ([]effects.ToolInv
 func (s *recordingStore) PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
+func (s *recordingStore) DispatchedEffects(context.Context, time.Time, int) ([]effects.EffectLedgerEntry, error) {
+	return nil, nil
+}
 func (s *recordingStore) ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error) {
+	return effects.EffectLedgerEntry{}, nil
+}
+func (s *recordingStore) ReclaimEffect(context.Context, string, int64, string, time.Time) (effects.EffectLedgerEntry, error) {
 	return effects.EffectLedgerEntry{}, nil
 }
 func (s *recordingStore) CommitEffectResult(context.Context, ports.EffectResultCommit) error {

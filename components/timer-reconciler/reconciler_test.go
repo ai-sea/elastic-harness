@@ -155,7 +155,13 @@ func (s *fakeStore) Invocations(context.Context, string) ([]effects.ToolInvocati
 func (s *fakeStore) PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error) {
 	return nil, nil
 }
+func (s *fakeStore) DispatchedEffects(context.Context, time.Time, int) ([]effects.EffectLedgerEntry, error) {
+	return nil, nil
+}
 func (s *fakeStore) ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error) {
+	return effects.EffectLedgerEntry{}, nil
+}
+func (s *fakeStore) ReclaimEffect(context.Context, string, int64, string, time.Time) (effects.EffectLedgerEntry, error) {
 	return effects.EffectLedgerEntry{}, nil
 }
 func (s *fakeStore) CommitEffectResult(context.Context, ports.EffectResultCommit) error { return nil }

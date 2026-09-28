@@ -116,6 +116,45 @@ func TestIdempotentEffectFailureSurfacesForRetry(t *testing.T) {
 	}
 }
 
+func TestRecoverOnceReexecutesExpiredIdempotentEffect(t *testing.T) {
+	now := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	entry := pendingEntry("effect-1", domain.SideEffectIdempotent)
+	entry.Status, entry.LedgerVersion, entry.Deadline = effects.EffectDispatched, 2, now.Add(-time.Second)
+	store := newFakeStore(entry)
+	executor := &recordingExecutor{}
+	dispatcher := New(store, executor, "dispatcher-recovery")
+	dispatcher.now = func() time.Time { return now }
+
+	recovered, err := dispatcher.RecoverOnce(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered != 1 || executor.count() != 1 {
+		t.Fatalf("过期幂等 Effect 必须以原幂等键重投并收敛：recovered=%d calls=%d", recovered, executor.count())
+	}
+	if store.entries[entry.EffectID].Status != effects.EffectCommitted {
+		t.Fatalf("恢复后状态未提交：%+v", store.entries[entry.EffectID])
+	}
+}
+
+func TestRecoverOnceNeverReexecutesUncertainNonIdempotentEffect(t *testing.T) {
+	now := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	entry := pendingEntry("effect-1", domain.SideEffectNonIdempotent)
+	entry.Status, entry.LedgerVersion, entry.Deadline = effects.EffectDispatched, 2, now.Add(-time.Second)
+	store := newFakeStore(entry)
+	executor := &recordingExecutor{recoverCompleted: false}
+	dispatcher := New(store, executor, "dispatcher-recovery")
+	dispatcher.now = func() time.Time { return now }
+
+	recovered, err := dispatcher.RecoverOnce(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered != 0 || executor.count() != 0 || !store.manual {
+		t.Fatalf("不确定的非幂等 Effect 必须转人工且不得重投：recovered=%d calls=%d manual=%v", recovered, executor.count(), store.manual)
+	}
+}
+
 func pendingEntry(effectID string, sideEffect domain.SideEffect) effects.EffectLedgerEntry {
 	return effects.EffectLedgerEntry{
 		EffectID: effectID, TenantID: "tenant-1", RunID: "run-1",
@@ -182,6 +221,32 @@ func (s *fakeStore) PendingEffects(context.Context, int) ([]effects.EffectLedger
 		}
 	}
 	return pending, nil
+}
+
+func (s *fakeStore) DispatchedEffects(_ context.Context, expiredBefore time.Time, _ int) ([]effects.EffectLedgerEntry, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	entries := make([]effects.EffectLedgerEntry, 0)
+	for _, entry := range s.entries {
+		if entry.Status == effects.EffectDispatched && !entry.Deadline.After(expiredBefore) {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+func (s *fakeStore) ReclaimEffect(_ context.Context, effectID string, ledgerVersion int64, dispatcher string, deadline time.Time) (effects.EffectLedgerEntry, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	entry, exists := s.entries[effectID]
+	if !exists || entry.Status != effects.EffectDispatched || entry.LedgerVersion != ledgerVersion {
+		return effects.EffectLedgerEntry{}, ports.ErrConflict
+	}
+	entry.LedgerVersion++
+	entry.DispatcherRef = dispatcher
+	entry.Deadline = deadline
+	s.entries[effectID] = entry
+	return entry, nil
 }
 
 func (s *fakeStore) ClaimEffect(_ context.Context, effectID string, ledgerVersion int64, dispatcher string) (effects.EffectLedgerEntry, error) {

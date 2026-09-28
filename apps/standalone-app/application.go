@@ -214,6 +214,10 @@ func (a *application) start(
 		_, err := effectDispatcher.DispatchOnce(ctx, 100)
 		return err
 	}, logger)
+	a.runLoop(ctx, time.Second, func() error {
+		_, err := effectDispatcher.RecoverOnce(ctx, 100)
+		return err
+	}, logger)
 	a.runLoop(ctx, 50*time.Millisecond, func() error {
 		if _, err := timerReconciler.FireDueTimers(ctx, 100); err != nil {
 			return err

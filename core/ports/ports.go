@@ -107,6 +107,8 @@ type StateStore interface {
 	Invocations(context.Context, string) ([]effects.ToolInvocation, error)
 	PendingEffects(context.Context, int) ([]effects.EffectLedgerEntry, error)
 	ClaimEffect(context.Context, string, int64, string) (effects.EffectLedgerEntry, error)
+	DispatchedEffects(context.Context, time.Time, int) ([]effects.EffectLedgerEntry, error)
+	ReclaimEffect(context.Context, string, int64, string, time.Time) (effects.EffectLedgerEntry, error)
 	CommitEffectResult(context.Context, EffectResultCommit) error
 	MarkEffectManual(context.Context, string, int64) error
 	DueTimers(context.Context, time.Time, int) ([]effects.Timer, error)

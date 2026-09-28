@@ -161,6 +161,61 @@ func TestTimerUsesStateEnterCounter(t *testing.T) {
 	}
 }
 
+func TestExpiredDispatchedEffectCanBeReclaimedWithIndependentCAS(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createTestRun(t, store, now)
+	load, err := store.AcquireExecution(context.Background(), "run-1", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := transitionFrom(load, now)
+	commit.Effects = []effects.EffectLedgerEntry{{
+		EffectID: "effect-recovery", InvocationID: "invocation-recovery", RunID: "run-1", Kind: qname.MustParse("harness/tool.invoke"),
+		Status: effects.EffectPending, LedgerVersion: 1, IdempotencyKey: "run-1/effect-recovery",
+		SideEffect: domain.SideEffectIdempotent, Deadline: now.Add(time.Second), CreatedAt: now,
+	}}
+	commit.Invocations = []effects.ToolInvocation{{
+		InvocationID: "invocation-recovery", TenantID: "tenant-1", RunID: "run-1",
+		ToolID: qname.MustParse("harness/echo"), RegistrationID: "registration-1", RegistrationRevision: 1,
+		Status: effects.InvocationPending, InvocationVersion: 1, Attempt: 1,
+		IdempotencyKey: "run-1/effect-recovery", CallbackDeadline: now.Add(time.Minute),
+	}}
+	if err := store.CommitTransition(context.Background(), commit); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimEffect(context.Background(), "effect-recovery", 1, "dispatcher-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	candidates, err := store.DispatchedEffects(context.Background(), now, 10)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("超时派发项扫描结果错误：%+v err=%v", candidates, err)
+	}
+	reclaimed, err := store.ReclaimEffect(context.Background(), claimed.EffectID, claimed.LedgerVersion, "dispatcher-b", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed.LedgerVersion != 3 || reclaimed.DispatcherRef != "dispatcher-b" {
+		t.Fatalf("接管必须推进独立 Ledger CAS：%+v", reclaimed)
+	}
+	if _, err := store.ReclaimEffect(context.Background(), claimed.EffectID, claimed.LedgerVersion, "dispatcher-c", now.Add(time.Minute)); !errors.Is(err, ports.ErrConflict) {
+		t.Fatalf("旧 ledgerVersion 不得再次接管：%v", err)
+	}
+	if err := store.MarkEffectManual(context.Background(), reclaimed.EffectID, reclaimed.LedgerVersion); err != nil {
+		t.Fatal(err)
+	}
+	invocations, err := store.Invocations(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 1 || invocations[0].Status != effects.InvocationFailed {
+		t.Fatalf("人工处置 Effect 必须在同一事务终结 Invocation：%+v", invocations)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := OpenMemory()

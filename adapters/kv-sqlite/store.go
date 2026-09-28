@@ -314,6 +314,15 @@ func (s *Store) PendingEffects(ctx context.Context, limit int) ([]effects.Effect
 		`SELECT body FROM effects WHERE status=? ORDER BY deadline LIMIT ?`, effects.EffectPending, limit)
 }
 
+func (s *Store) DispatchedEffects(ctx context.Context, expiredBefore time.Time, limit int) ([]effects.EffectLedgerEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	return queryJSON[effects.EffectLedgerEntry](ctx, s.database,
+		`SELECT body FROM effects WHERE status=? AND deadline<=? ORDER BY deadline LIMIT ?`,
+		effects.EffectDispatched, formatTime(expiredBefore), limit)
+}
+
 func (s *Store) ClaimEffect(ctx context.Context, effectID string, ledgerVersion int64, dispatcher string) (effects.EffectLedgerEntry, error) {
 	var claimed effects.EffectLedgerEntry
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
@@ -354,6 +363,51 @@ WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.Ledger
 		return nil
 	})
 	return claimed, err
+}
+
+// ReclaimEffect 只转移已超时派发项的所有权，不把状态退回 PENDING。
+// 外部调用是否重放由 Dispatcher 根据 sideEffect 分类决定。
+func (s *Store) ReclaimEffect(
+	ctx context.Context,
+	effectID string,
+	ledgerVersion int64,
+	dispatcher string,
+	nextDeadline time.Time,
+) (effects.EffectLedgerEntry, error) {
+	var reclaimed effects.EffectLedgerEntry
+	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
+		var body []byte
+		if err := tx.QueryRowContext(ctx, `SELECT body FROM effects WHERE effect_id=?`, effectID).Scan(&body); err != nil {
+			return mapReadError(err)
+		}
+		entry, err := unmarshal[effects.EffectLedgerEntry](body)
+		if err != nil {
+			return err
+		}
+		if entry.Status != effects.EffectDispatched || entry.LedgerVersion != ledgerVersion || entry.Deadline.After(s.now()) {
+			return ports.ErrConflict
+		}
+		entry.LedgerVersion++
+		entry.DispatcherRef = dispatcher
+		entry.Deadline = nextDeadline
+		updatedBody, err := marshal(entry)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE effects SET ledger_version=?,deadline=?,body=?
+WHERE effect_id=? AND status=? AND ledger_version=?`, entry.LedgerVersion, formatTime(nextDeadline), updatedBody,
+			effectID, effects.EffectDispatched, ledgerVersion)
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count != 1 {
+			return ports.ErrConflict
+		}
+		reclaimed = entry
+		return nil
+	})
+	return reclaimed, err
 }
 
 func (s *Store) CommitEffectResult(ctx context.Context, commit ports.EffectResultCommit) error {
@@ -418,16 +472,6 @@ WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.Ledger
 }
 
 func (s *Store) MarkEffectManual(ctx context.Context, effectID string, ledgerVersion int64) error {
-	return s.updateEffect(ctx, effectID, ledgerVersion, func(entry *effects.EffectLedgerEntry) error {
-		if entry.Status != effects.EffectDispatched {
-			return ports.ErrConflict
-		}
-		entry.Status = effects.EffectManual
-		return nil
-	})
-}
-
-func (s *Store) updateEffect(ctx context.Context, effectID string, ledgerVersion int64, mutate func(*effects.EffectLedgerEntry) error) error {
 	return s.inTransaction(ctx, func(tx *sql.Tx) error {
 		var body []byte
 		if err := tx.QueryRowContext(ctx, `SELECT body FROM effects WHERE effect_id=?`, effectID).Scan(&body); err != nil {
@@ -437,25 +481,29 @@ func (s *Store) updateEffect(ctx context.Context, effectID string, ledgerVersion
 		if err != nil {
 			return err
 		}
-		if entry.LedgerVersion != ledgerVersion {
+		if entry.Status != effects.EffectDispatched || entry.LedgerVersion != ledgerVersion {
 			return ports.ErrConflict
 		}
-		if err := mutate(&entry); err != nil {
-			return err
-		}
+		entry.Status = effects.EffectManual
 		entry.LedgerVersion++
 		updatedBody, err := marshal(entry)
 		if err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE effects SET status=?,ledger_version=?,body=?
-WHERE effect_id=? AND ledger_version=?`, entry.Status, entry.LedgerVersion, updatedBody, effectID, ledgerVersion)
+WHERE effect_id=? AND status=? AND ledger_version=?`, entry.Status, entry.LedgerVersion, updatedBody,
+			effectID, effects.EffectDispatched, ledgerVersion)
 		if err != nil {
 			return err
 		}
 		count, _ := result.RowsAffected()
 		if count != 1 {
 			return ports.ErrConflict
+		}
+		if entry.InvocationID != "" {
+			if err := transitionInvocation(ctx, tx, entry.InvocationID, effects.InvocationDispatched, effects.InvocationFailed, "", ""); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
