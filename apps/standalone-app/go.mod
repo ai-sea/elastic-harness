@@ -1,5 +1,7 @@
 module github.com/ai-sea/elastic-harness/apps/standalone-app
 
+// SPDX-License-Identifier: MIT
+
 go 1.24
 
 require (
