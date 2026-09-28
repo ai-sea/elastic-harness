@@ -97,8 +97,13 @@ func (s *Server) createMessage(response http.ResponseWriter, request *http.Reque
 	if input.Role == "" {
 		input.Role = "user"
 	}
+	chatID := request.PathValue("chatId")
+	if err := s.authorizeChat(request, chatID, input.TenantID); err != nil {
+		writeStoreError(response, err)
+		return
+	}
 	message := domain.Message{
-		TenantID: input.TenantID, ChatID: request.PathValue("chatId"), MessageID: s.ids.New("msg_"),
+		TenantID: input.TenantID, ChatID: chatID, MessageID: s.ids.New("msg_"),
 		Role: input.Role, Content: input.Content, CreatedAt: s.now(),
 	}
 	if err := s.store.AppendMessage(request.Context(), message); err != nil {
@@ -117,10 +122,15 @@ func (s *Server) createRun(response http.ResponseWriter, request *http.Request) 
 		writeError(response, http.StatusBadRequest, errors.New("tenantId 与 prompt 不能为空"))
 		return
 	}
+	chatID := request.PathValue("chatId")
+	if err := s.authorizeChat(request, chatID, input.TenantID); err != nil {
+		writeStoreError(response, err)
+		return
+	}
 	initialContext, _ := json.Marshal(map[string]string{"prompt": input.Prompt})
 	budget := s.budgetForRun()
 	run, err := s.engine.CreateRun(request.Context(), runtime.CreateRunRequest{
-		TenantID: input.TenantID, ChatID: request.PathValue("chatId"), Harness: s.defaults.Harness,
+		TenantID: input.TenantID, ChatID: chatID, Harness: s.defaults.Harness,
 		Profile: s.defaults.Profile, Budget: budget, InitialContext: initialContext,
 	})
 	if err != nil {
@@ -139,6 +149,10 @@ func (s *Server) budgetForRun() domain.Budget {
 }
 
 func (s *Server) cancelRun(response http.ResponseWriter, request *http.Request) {
+	if _, err := s.authorizedRun(request); err != nil {
+		writeStoreError(response, err)
+		return
+	}
 	runID := request.PathValue("runId")
 	now := s.now()
 	signal := effects.StateSignal{
@@ -154,6 +168,17 @@ func (s *Server) cancelRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writeJSON(response, http.StatusAccepted, map[string]bool{"accepted": inserted})
+}
+
+func (s *Server) authorizeChat(request *http.Request, chatID, tenantID string) error {
+	chat, err := s.store.GetChat(request.Context(), chatID)
+	if err != nil {
+		return err
+	}
+	if tenantID == "" || tenantID != chat.TenantID {
+		return ports.ErrUnauthorized
+	}
+	return nil
 }
 
 func (s *Server) getRun(response http.ResponseWriter, request *http.Request) {

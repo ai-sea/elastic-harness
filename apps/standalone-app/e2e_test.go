@@ -34,6 +34,9 @@ func TestAgentLoopEndToEnd(t *testing.T) {
 	defer server.Close()
 
 	chat := postJSON[domain.Chat](t, server.URL+"/v1/chats", map[string]string{"tenantId": "tenant-e2e"})
+	assertPostStatus(t, server.URL+"/v1/chats/"+chat.ChatID+"/messages", map[string]string{
+		"tenantId": "tenant-other", "role": "user", "content": "越权消息",
+	}, "", http.StatusForbidden)
 	postJSON[domain.Message](t, server.URL+"/v1/chats/"+chat.ChatID+"/messages", map[string]string{
 		"tenantId": "tenant-e2e", "role": "user", "content": "请调用 echo 工具",
 	})
@@ -43,6 +46,7 @@ func TestAgentLoopEndToEnd(t *testing.T) {
 	if run.Budget.Deadline.Before(time.Now().Add(50 * time.Minute)) {
 		t.Fatalf("Run 截止时间必须按创建时刻计算：%s", run.Budget.Deadline)
 	}
+	assertPostStatus(t, server.URL+"/v1/runs/"+run.RunID+"/cancel", map[string]string{}, "tenant-other", http.StatusForbidden)
 	run = awaitTerminal(t, server.URL, run.RunID)
 	if run.TerminalReason == nil || *run.TerminalReason != domain.TerminalCompleted {
 		t.Fatalf("Run 未成功完成：%+v", run)
@@ -82,6 +86,25 @@ func TestAgentLoopEndToEnd(t *testing.T) {
 	}
 	view, _ := app.views.View("tenant-e2e", chat.ChatID)
 	t.Fatalf("ChatEventQueue 未被消费到投影视图：%+v", view)
+}
+
+func assertPostStatus(t *testing.T, url string, input any, tenantID string, want int) {
+	t.Helper()
+	body, _ := json.Marshal(input)
+	request, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	if tenantID != "" {
+		request.Header.Set("X-Tenant-ID", tenantID)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != want {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("POST %s 返回 %d，期望 %d：%s", url, response.StatusCode, want, data)
+	}
 }
 
 func awaitTerminal(t *testing.T, baseURL, runID string) domain.RunSnapshot {
